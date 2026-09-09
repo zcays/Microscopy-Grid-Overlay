@@ -46,11 +46,17 @@ def _get_rotated_data(img, rotation):
         if rotation == 0:
             rotated = img
         else:
-            rotated = img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+            rotated = img.rotate(-rotation, expand=True, resample=Image.BILINEAR)
+        # Create a lightweight preview for the browser UI to avoid WebGL lag
+        preview = rotated.copy()
+        preview.thumbnail((2000, 2000), Image.BILINEAR)
+
         _rotation_cache[cache_key] = {
-            'b64': _pil_to_b64(rotated),
+            'b64': _pil_to_b64(preview),
             'w': rotated.size[0],
             'h': rotated.size[1],
+            'pw': preview.size[0],
+            'ph': preview.size[1],
             'img': rotated
         }
         if len(_rotation_cache) > 20:
@@ -125,11 +131,18 @@ app.layout = html.Div([
             )
         ]),
 
+        # ── Interactive Controls ───────────────────────────────────
+        html.Div([
+            dcc.Store(id='placement-mode', data=False),
+            html.Button("🎯 Place Center Point", id='btn-place-center', n_clicks=0, style=_btn_style),
+            html.Div(id='placement-status', style={'color': '#ffaa00', 'fontFamily': 'sans-serif', 'fontSize': '0.85em', 'marginBottom': '15px', 'textAlign': 'center', 'fontWeight': 'bold'})
+        ]),
+
         # ── Sliders ────────────────────────────────────────────────
         html.Div([
             html.Label("Image Rotation (°)", style=_label_style),
             dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.1, value=0,
-                       updatemode='drag',
+                       updatemode='mouseup',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-180, 181, 90)},
                        tooltip={"placement": "bottom", "always_visible": True})
@@ -137,30 +150,32 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Grid Spacing (px)", style=_label_style),
-            dcc.Slider(id='grid-spacing-slider', min=10, max=400, step=0.1, value=229,
+            dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.1, value=229,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(50, 401, 100)},
+                              for i in range(500, 2001, 500)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
 
         html.Div([
-            html.Label("Grid X Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-x-offset-slider', min=-200, max=200, step=0.1, value=0,
+            html.Label("Center Point X (px)", style=_label_style),
+            dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.1, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(-200, 201, 100)},
+                              for i in range(-2000, 2001, 1000)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
 
         html.Div([
-            html.Label("Grid Y Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-y-offset-slider', min=-200, max=200, step=0.1, value=0,
+            html.Label("Center Point Y (px)", style=_label_style),
+            dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.1, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(-200, 201, 100)},
+                              for i in range(-2000, 2001, 1000)},
                        tooltip={"placement": "bottom", "always_visible": True})
-        ], style={'marginBottom': '15px'}),
+        ], style={'marginBottom': '5px'}),
+        
+        html.Div(id='center-point-live-display', style={'color': '#00ffff', 'fontFamily': 'monospace', 'fontSize': '0.9em', 'marginBottom': '15px', 'textAlign': 'center'}),
 
         html.Div([
             html.Label("Grid Opacity", style=_label_style),
@@ -336,7 +351,7 @@ def update_image_store(upload_contents, rotation):
                 pass
     current = _uploaded_image if _uploaded_image is not None else original_image
     data = _get_rotated_data(current, rotation)
-    return {'b64': data['b64'], 'w': data['w'], 'h': data['h']}
+    return {'b64': data['b64'], 'w': data['w'], 'h': data['h'], 'pw': data['pw'], 'ph': data['ph']}
 
 
 # ── Clientside callback: figure with grid + well labels + fluorescence ──
@@ -350,6 +365,11 @@ app.clientside_callback(
         var b64 = imgData.b64;
         var imgW = imgData.w;
         var imgH = imgData.h;
+        var previewW = imgData.pw || imgW;
+        var previewH = imgData.ph || imgH;
+        var dx = imgW / previewW;
+        var dy = imgH / previewH;
+        
         var gridColor = 'rgba(0, 255, 255, ' + gridOpacity + ')';
         var spacing = Math.max(gridSpacing, 1);
         var doLabels = showLabels && showLabels.indexOf('show') !== -1;
@@ -365,7 +385,8 @@ app.clientside_callback(
             xPositions.push(x);
             shapes.push({
                 type: 'line', x0: x, x1: x, y0: 0, y1: imgH,
-                line: {color: gridColor, width: 1.5}
+                line: {color: gridColor, width: 1.5},
+                editable: false
             });
         }
 
@@ -375,9 +396,20 @@ app.clientside_callback(
             yPositions.push(y);
             shapes.push({
                 type: 'line', x0: 0, x1: imgW, y0: y, y1: y,
-                line: {color: gridColor, width: 1.5}
+                line: {color: gridColor, width: 1.5},
+                editable: false
             });
         }
+
+        // Add a visible center point shape
+        shapes.push({
+            type: 'circle',
+            x0: offsetX - 8, y0: offsetY - 8,
+            x1: offsetX + 8, y1: offsetY + 8,
+            line: {color: 'rgba(255, 50, 50, 0.9)', width: 2},
+            fillcolor: 'rgba(255, 255, 255, 0.5)',
+            name: 'center-point'
+        });
 
         // Build axis tick labels centered in each box
         var xTickVals = [];
@@ -448,23 +480,23 @@ app.clientside_callback(
         var topMargin = doLabels ? 25 : 0;
 
         return {
-            data: [],
+            data: [{
+                type: 'image',
+                source: b64,
+                x0: 0,
+                y0: 0,
+                dx: dx,
+                dy: dy,
+                hoverinfo: 'none'
+            }],
             layout: {
-                images: [{
-                    source: b64,
-                    xref: 'x', yref: 'y',
-                    x: 0, y: 0,
-                    sizex: imgW, sizey: imgH,
-                    sizing: 'stretch',
-                    layer: 'below'
-                }],
                 shapes: shapes,
                 annotations: annotations,
                 xaxis: {
                     range: xRange,
                     showgrid: false, zeroline: false,
                     title: '',
-                    constrain: 'range', scaleanchor: 'y',
+                    scaleanchor: 'y',
                     side: 'top',
                     showticklabels: doLabels,
                     tickvals: xTickVals,
@@ -476,7 +508,6 @@ app.clientside_callback(
                     range: yRange,
                     showgrid: false, zeroline: false,
                     title: '',
-                    constrain: 'range',
                     side: 'left',
                     showticklabels: doLabels,
                     tickvals: yTickVals,
@@ -505,6 +536,18 @@ app.clientside_callback(
     [State('image-graph', 'relayoutData')]
 )
 
+# ── Clientside callback: update center point live display ──────────────
+app.clientside_callback(
+    """
+    function(x, y) {
+        if (x === undefined || y === undefined) return '';
+        return 'Center Point Selected: (' + x.toFixed(1) + ', ' + y.toFixed(1) + ')';
+    }
+    """,
+    Output('center-point-live-display', 'children'),
+    [Input('grid-x-offset-slider', 'value'),
+     Input('grid-y-offset-slider', 'value')]
+)
 
 # ── Helper: compute grid positions ─────────────────────────────────────
 def _grid_positions(spacing, offset_x, offset_y, w, h):
@@ -930,6 +973,41 @@ def load_settings(contents):
         return dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, dash.no_update, \
                f'❌ Error loading settings: {str(e)}'
+
+
+# ── Server callback: Place Center Point ─────────────────────────────────
+@app.callback(
+    [Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('placement-mode', 'data', allow_duplicate=True),
+     Output('placement-status', 'children')],
+    [Input('image-graph', 'clickData'),
+     Input('btn-place-center', 'n_clicks')],
+    State('placement-mode', 'data'),
+    prevent_initial_call=True
+)
+def update_offsets_from_click(clickData, btn_clicks, placement_mode):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+        
+    trigger_id = ctx.triggered[0]['prop_id']
+    
+    # If the user clicked the "Place Center Point" button
+    if 'btn-place-center' in trigger_id:
+        return dash.no_update, dash.no_update, True, 'Select a point on the image...'
+    
+    # If the user clicked somewhere on the image trace
+    if 'clickData' in trigger_id and clickData:
+        if placement_mode:
+            try:
+                pt = clickData['points'][0]
+                # pt['x'] and pt['y'] are exact coordinates on the image trace
+                return round(pt['x'], 1), round(pt['y'], 1), False, ''
+            except (KeyError, IndexError):
+                pass
+
+    raise dash.exceptions.PreventUpdate
 
 
 if __name__ == '__main__':
