@@ -1,7 +1,7 @@
 import dash
 from dash import dcc, html, Input, Output, State, callback_context
 import plotly.graph_objects as go
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import requests
 from io import BytesIO
@@ -15,7 +15,7 @@ app = dash.Dash(__name__, title="Microscopy Grid Aligner")
 try:
     url = "https://raw.githubusercontent.com/scikit-image/scikit-image/main/skimage/data/immunohistochemistry.png"
     response = requests.get(url, timeout=5)
-    original_image = ImageOps.exif_transpose(Image.open(BytesIO(response.content))).convert('RGB')
+    original_image = Image.open(BytesIO(response.content)).convert('RGB')
 except Exception:
     img_array = np.zeros((800, 800, 3), dtype=np.uint8)
     for i in range(0, 800, 80):
@@ -120,25 +120,22 @@ app.layout = html.Div([
                     'marginBottom': '15px', 'color': '#bbbbbb',
                     'borderColor': '#777', 'cursor': 'pointer', 'fontSize': '0.85em'
                 },
-                multiple=False,
-                accept='image/*,.tif,.tiff'
+                multiple=False
             )
         ]),
 
         # ── Sliders ────────────────────────────────────────────────
         html.Div([
             html.Label("Image Rotation (°)", style=_label_style),
-            dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.1, value=0,
-                       updatemode='drag',
+            dcc.Slider(id='rotation-slider', min=0, max=360, step=0.1, value=0,
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(-180, 181, 90)},
+                              for i in range(0, 361, 90)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
 
         html.Div([
             html.Label("Grid Spacing (px)", style=_label_style),
-            dcc.Slider(id='grid-spacing-slider', min=10, max=400, step=0.1, value=229,
-                       updatemode='drag',
+            dcc.Slider(id='grid-spacing-slider', min=10, max=400, step=0.1, value=300,
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(50, 401, 100)},
                        tooltip={"placement": "bottom", "always_visible": True})
@@ -147,7 +144,6 @@ app.layout = html.Div([
         html.Div([
             html.Label("Grid X Offset (px)", style=_label_style),
             dcc.Slider(id='grid-x-offset-slider', min=-200, max=200, step=0.1, value=0,
-                       updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-200, 201, 100)},
                        tooltip={"placement": "bottom", "always_visible": True})
@@ -156,7 +152,6 @@ app.layout = html.Div([
         html.Div([
             html.Label("Grid Y Offset (px)", style=_label_style),
             dcc.Slider(id='grid-y-offset-slider', min=-200, max=200, step=0.1, value=0,
-                       updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-200, 201, 100)},
                        tooltip={"placement": "bottom", "always_visible": True})
@@ -165,7 +160,6 @@ app.layout = html.Div([
         html.Div([
             html.Label("Grid Opacity", style=_label_style),
             dcc.Slider(id='grid-opacity-slider', min=0, max=1, step=0.1, value=0.7,
-                       updatemode='drag',
                        marks={0: {'label': '0', 'style': {'color': '#777'}},
                               1: {'label': '1', 'style': {'color': '#777'}}},
                        tooltip={"placement": "bottom", "always_visible": False})
@@ -331,7 +325,7 @@ def update_image_store(upload_contents, rotation):
             try:
                 _, content_string = upload_contents.split(',')
                 decoded = base64.b64decode(content_string)
-                _uploaded_image = ImageOps.exif_transpose(Image.open(BytesIO(decoded))).convert('RGB')
+                _uploaded_image = Image.open(BytesIO(decoded)).convert('RGB')
             except Exception:
                 pass
     current = _uploaded_image if _uploaded_image is not None else original_image
@@ -487,8 +481,7 @@ app.clientside_callback(
                 margin: {l: leftMargin, r: 0, t: topMargin, b: 0},
                 plot_bgcolor: '#000000',
                 paper_bgcolor: '#000000',
-                uirevision: 'constant',
-                dragmode: 'pan'
+                uirevision: 'constant'
             }
         };
     }
@@ -919,7 +912,7 @@ def load_settings(contents):
         s = json.loads(decoded)
         return (
             s.get('rotation', 0),
-            s.get('grid_spacing', 229),
+            s.get('grid_spacing', 300),
             s.get('grid_x_offset', 0),
             s.get('grid_y_offset', 0),
             s.get('grid_opacity', 0.7),
@@ -934,5 +927,5 @@ def load_settings(contents):
 
 if __name__ == '__main__':
     import sys
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8050
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8051
     app.run(debug=True, port=port)
