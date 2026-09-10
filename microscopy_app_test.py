@@ -758,11 +758,18 @@ def update_well_options(img_data, spacing, offset_x, offset_y):
     x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
+    
+    # Prevent OOM crashes by limiting the maximum number of generated options
+    max_options = 1000
     options = []
+    
     for r in range(n_rows):
         for c in range(n_cols):
+            if len(options) >= max_options:
+                return options
             label = _row_label(r) + str(c + 1)
             options.append({'label': label, 'value': f'{r},{c}'})
+            
     return options
 
 
