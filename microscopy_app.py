@@ -555,13 +555,16 @@ app.clientside_callback(
 app.clientside_callback(
     """
     function(id) {
-        if (!window._keydown_listener_added) {
-            window._keydown_listener_added = true;
+        if (!window._keydown_listener_v2_added) {
+            window._keydown_listener_v2_added = true;
             document.addEventListener('keydown', function(e) {
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
                 var key = e.key;
                 if (['w', 'W', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-'].includes(key)) {
-                    if (key.startsWith('Arrow')) e.preventDefault();
+                    if (key.startsWith('Arrow') || key === '+' || key === '-' || key === '=') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
                     
                     var activeId = null;
                     if (document.activeElement) {
@@ -572,7 +575,7 @@ app.clientside_callback(
                     }
                     window.dash_clientside.set_props('keypress-store', {data: {key: key, ts: Date.now(), active_id: activeId}});
                 }
-            });
+            }, true);
         }
         return window.dash_clientside.no_update;
     }
