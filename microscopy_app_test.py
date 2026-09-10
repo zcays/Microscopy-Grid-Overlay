@@ -1172,7 +1172,9 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
         rot_img = current.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=0)
         arr = np.array(rot_img.convert('L'))
         h, w = arr.shape
-        inner_size = min(h, w, 600)
+        # Dynamic crop for rotation: ~20 cells to avoid dense grid blurring
+        target_cells = 20
+        inner_size = min(h, w, max(200, int(hint_spacing * target_cells)))
         c_y, c_x = h // 2, w // 2
         inner = arr[c_y - inner_size//2 : c_y + inner_size//2, 
                     c_x - inner_size//2 : c_x + inner_size//2]
@@ -1213,8 +1215,9 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
     gray = np.array(rotated.convert('L'))
     h, w = gray.shape
     
-    # To avoid edge artifacts, process a large central crop (e.g. 1000px if possible)
-    crop_size = min(h, w, 1000)
+    # To avoid edge distortion on dense grids, scale crop size to ~30 grid cells
+    target_cells = 30
+    crop_size = min(h, w, max(200, int(hint_spacing * target_cells)))
     center_y, center_x = h // 2, w // 2
     crop = gray[center_y - crop_size//2 : center_y + crop_size//2, 
                 center_x - crop_size//2 : center_x + crop_size//2]
@@ -1261,7 +1264,7 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
     # User specified "perfect square", so we average them
     spacing = (spacing_x + spacing_y) / 2.0
     
-    # Find the dark spaces (valleys)
+    # Find the dark spaces (valleys) with subpixel precision
     def get_grid_offset(profile, sp):
         folded = np.zeros(int(round(sp)))
         counts = np.zeros(int(round(sp)))
@@ -1271,7 +1274,17 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
                 folded[idx] += val
                 counts[idx] += 1
         avg_folded = folded / np.maximum(counts, 1)
-        return float(np.argmin(avg_folded))
+        
+        # Subpixel interpolation for minimum
+        x = np.argmin(avg_folded)
+        if x == 0 or x == len(avg_folded) - 1:
+            return float(x)
+        y1, y2, y3 = avg_folded[x-1], avg_folded[x], avg_folded[x+1]
+        denom = 2 * (y1 - 2*y2 + y3)
+        if denom == 0:
+            return float(x)
+        dx = (y1 - y3) / denom
+        return float(x + dx)
         
     offset_x_crop = get_grid_offset(proj_x, spacing)
     offset_y_crop = get_grid_offset(proj_y, spacing)
