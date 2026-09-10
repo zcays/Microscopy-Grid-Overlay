@@ -154,17 +154,8 @@ app.layout = html.Div([
         ], style={'marginBottom': '15px'}),
 
         html.Div([
-            html.Label("Grid Spacing X (px)", style=_label_style),
-            dcc.Slider(id='grid-spacing-x-slider', min=10, max=2000, step=0.1, value=229,
-                       updatemode='drag',
-                       marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(500, 2001, 500)},
-                       tooltip={"placement": "bottom", "always_visible": True})
-        ], style={'marginBottom': '15px'}),
-        
-        html.Div([
-            html.Label("Grid Spacing Y (px)", style=_label_style),
-            dcc.Slider(id='grid-spacing-y-slider', min=10, max=2000, step=0.1, value=229,
+            html.Label("Grid Spacing (px)", style=_label_style),
+            dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.1, value=229,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(500, 2001, 500)},
@@ -204,7 +195,7 @@ app.layout = html.Div([
             'color': '#ffffff', 'fontFamily': 'sans-serif',
             'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
         }),
-        html.Div("Automatically scale and position the grid to bound all glowing regions. Requires approximate Spacing X/Y values above.", style={'color': '#aaaaaa', 'fontSize': '0.8em', 'marginBottom': '10px'}),
+        html.Div("Automatically scale and position the grid to bound all glowing regions. Requires approximate Spacing value above.", style={'color': '#aaaaaa', 'fontSize': '0.8em', 'marginBottom': '10px'}),
         html.Button("🔍 Auto-Detect & Fit Grid", id='btn-autofit', n_clicks=0, style=_btn_style),
 
 
@@ -384,7 +375,7 @@ def update_image_store(upload_contents, rotation):
 # ── Clientside callback: figure with grid + well labels + fluorescence ──
 app.clientside_callback(
     """
-    function(imgData, centerPoint, gridSpacingX, gridSpacingY, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, relayoutData) {
+    function(imgData, centerPoint, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, relayoutData) {
         if (!imgData) {
             return window.dash_clientside.no_update;
         }
@@ -404,8 +395,7 @@ app.clientside_callback(
         var dy = imgH / previewH;
         
         var gridColor = 'rgba(0, 255, 255, ' + gridOpacity + ')';
-        var spacingX = Math.max(gridSpacingX, 1);
-        var spacingY = Math.max(gridSpacingY, 1);
+        var spacing = Math.max(gridSpacing, 1);
         var doLabels = showLabels && showLabels.indexOf('show') !== -1;
         var doFluor = showFluor && showFluor.indexOf('show') !== -1 && flourData && flourData.values;
 
@@ -413,9 +403,9 @@ app.clientside_callback(
         var shapes = [];
 
         // Compute grid line positions
-        var startX = ((trueOffsetX % spacingX) + spacingX) % spacingX;
+        var startX = ((trueOffsetX % spacing) + spacing) % spacing;
         var xPositions = [];
-        for (var x = startX; x < imgW; x += spacingX) {
+        for (var x = startX; x < imgW; x += spacing) {
             xPositions.push(x);
             shapes.push({
                 type: 'line', x0: x, x1: x, y0: 0, y1: imgH,
@@ -424,9 +414,9 @@ app.clientside_callback(
             });
         }
 
-        var startY = ((trueOffsetY % spacingY) + spacingY) % spacingY;
+        var startY = ((trueOffsetY % spacing) + spacing) % spacing;
         var yPositions = [];
-        for (var y = startY; y < imgH; y += spacingY) {
+        for (var y = startY; y < imgH; y += spacing) {
             yPositions.push(y);
             shapes.push({
                 type: 'line', x0: 0, x1: imgW, y0: y, y1: y,
@@ -484,7 +474,7 @@ app.clientside_callback(
                         var fx = (xPositions[fcol] + xPositions[fcol + 1]) / 2;
                         var fy = (yPositions[frow] + yPositions[frow + 1]) / 2;
                         var val = fVals[frow][fcol];
-                        var fontSize = Math.min(Math.max(spacingX * 0.12, 8), 14);
+                        var fontSize = Math.min(Math.max(spacing * 0.12, 8), 14);
                         annotations.push({
                             x: fx, y: fy,
                             text: val.toFixed(1),
@@ -561,8 +551,7 @@ app.clientside_callback(
     Output('image-graph', 'figure'),
     [Input('image-store', 'data'),
      Input('center-point-store', 'data'),
-     Input('grid-spacing-x-slider', 'value'),
-     Input('grid-spacing-y-slider', 'value'),
+     Input('grid-spacing-slider', 'value'),
      Input('grid-x-offset-slider', 'value'),
      Input('grid-y-offset-slider', 'value'),
      Input('grid-opacity-slider', 'value'),
@@ -603,20 +592,20 @@ app.clientside_callback(
 )
 
 # ── Helper: compute grid positions ─────────────────────────────────────
-def _grid_positions(spacing_x, spacing_y, offset_x, offset_y, w, h):
+def _grid_positions(spacing, offset_x, offset_y, w, h):
     """Return lists of x and y grid line positions."""
     x_pos = []
-    sx = offset_x % spacing_x
+    sx = offset_x % spacing
     x = sx
     while x < w:
         x_pos.append(x)
-        x += spacing_x
+        x += spacing
     y_pos = []
-    sy = offset_y % spacing_y
+    sy = offset_y % spacing
     y = sy
     while y < h:
         y_pos.append(y)
-        y += spacing_y
+        y += spacing
     return x_pos, y_pos
 
 
@@ -625,15 +614,14 @@ def _grid_positions(spacing_x, spacing_y, offset_x, offset_y, w, h):
     Output('fluor-store', 'data'),
     Input('btn-compute-fluor', 'n_clicks'),
     [State('rotation-slider', 'value'),
-     State('grid-spacing-x-slider', 'value'),
-     State('grid-spacing-y-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('center-point-store', 'data'),
      State('fluor-channel', 'value')],
     prevent_initial_call=True
 )
-def compute_fluorescence(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, center_point, channel):
+def compute_fluorescence(n_clicks, rotation, spacing, offset_x, offset_y, center_point, channel):
     cx = center_point.get('x', 0) if center_point else 0
     cy = center_point.get('y', 0) if center_point else 0
     true_offset_x = cx + offset_x
@@ -643,7 +631,7 @@ def compute_fluorescence(n_clicks, rotation, spacing_x, spacing_y, offset_x, off
     rotated = _get_rotated_pil(current, rotation)
     arr = np.array(rotated)
     w, h = rotated.size
-    x_pos, y_pos = _grid_positions(spacing_x, spacing_y, true_offset_x, true_offset_y, w, h)
+    x_pos, y_pos = _grid_positions(spacing, true_offset_x, true_offset_y, w, h)
 
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
@@ -756,16 +744,15 @@ def update_matrix_graph(fluor_data):
 @app.callback(
     Output('crop-well-dropdown', 'options'),
     [Input('image-store', 'data'),
-     Input('grid-spacing-x-slider', 'value'),
-     Input('grid-spacing-y-slider', 'value'),
+     Input('grid-spacing-slider', 'value'),
      Input('grid-x-offset-slider', 'value'),
      Input('grid-y-offset-slider', 'value')]
 )
-def update_well_options(img_data, spacing_x, spacing_y, offset_x, offset_y):
+def update_well_options(img_data, spacing, offset_x, offset_y):
     if not img_data:
         return []
     w, h = img_data['w'], img_data['h']
-    x_pos, y_pos = _grid_positions(spacing_x, spacing_y, offset_x, offset_y, w, h)
+    x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
     options = []
@@ -782,20 +769,19 @@ def update_well_options(img_data, spacing_x, spacing_y, offset_x, offset_y):
     Input('btn-crop-well', 'n_clicks'),
     [State('crop-well-dropdown', 'value'),
      State('rotation-slider', 'value'),
-     State('grid-spacing-x-slider', 'value'),
-     State('grid-spacing-y-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value')],
     prevent_initial_call=True
 )
-def crop_well(n_clicks, well_value, rotation, spacing_x, spacing_y, offset_x, offset_y):
+def crop_well(n_clicks, well_value, rotation, spacing, offset_x, offset_y):
     if not well_value:
         raise dash.exceptions.PreventUpdate
     r, c = [int(v) for v in well_value.split(',')]
     current = _uploaded_image if _uploaded_image is not None else original_image
     rotated = _get_rotated_pil(current, rotation)
     w, h = rotated.size
-    x_pos, y_pos = _grid_positions(spacing_x, spacing_y, offset_x, offset_y, w, h)
+    x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
 
     x0 = int(round(x_pos[c]))
     x1 = int(round(x_pos[c + 1]))
@@ -831,15 +817,14 @@ def save_image(n_clicks, rotation):
     Output('download-grid', 'data'),
     Input('btn-save-grid', 'n_clicks'),
     [State('rotation-slider', 'value'),
-     State('grid-spacing-x-slider', 'value'),
-     State('grid-spacing-y-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('grid-opacity-slider', 'value'),
      State('show-labels-check', 'value')],
     prevent_initial_call=True
 )
-def save_grid(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, opacity, show_labels):
+def save_grid(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels):
     current = _uploaded_image if _uploaded_image is not None else original_image
     rotated = _get_rotated_pil(current, rotation)
     w, h = rotated.size
@@ -848,14 +833,14 @@ def save_grid(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, opac
     alpha = int(opacity * 255)
     color = (0, 255, 255, alpha)
 
-    col_positions, row_positions = _grid_positions(spacing_x, spacing_y, offset_x, offset_y, w, h)
+    col_positions, row_positions = _grid_positions(spacing, offset_x, offset_y, w, h)
     for x in col_positions:
         draw.line([(x, 0), (x, h)], fill=color, width=2)
     for y in row_positions:
         draw.line([(0, y), (w, y)], fill=color, width=2)
 
     if show_labels and 'show' in show_labels:
-        font_size = min(max(int(min(spacing_x, spacing_y) * 0.15), 8), 16)
+        font_size = min(max(int(spacing * 0.15), 8), 16)
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", font_size)
         except Exception:
@@ -881,8 +866,7 @@ def save_grid(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, opac
     Output('download-merged', 'data'),
     Input('btn-save-merged', 'n_clicks'),
     [State('rotation-slider', 'value'),
-     State('grid-spacing-x-slider', 'value'),
-     State('grid-spacing-y-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('grid-opacity-slider', 'value'),
@@ -891,7 +875,7 @@ def save_grid(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, opac
      State('show-fluor-check', 'value')],
     prevent_initial_call=True
 )
-def save_merged(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, opacity, show_labels, fluor_data, show_fluor):
+def save_merged(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels, fluor_data, show_fluor):
     current = _uploaded_image if _uploaded_image is not None else original_image
     rotated = _get_rotated_pil(current, rotation)
     w, h = rotated.size
@@ -902,14 +886,14 @@ def save_merged(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, op
     alpha = int(opacity * 255)
     color = (0, 255, 255, alpha)
 
-    col_positions, row_positions = _grid_positions(spacing_x, spacing_y, offset_x, offset_y, w, h)
+    col_positions, row_positions = _grid_positions(spacing, offset_x, offset_y, w, h)
     for x in col_positions:
         draw.line([(x, 0), (x, h)], fill=color, width=2)
     for y in row_positions:
         draw.line([(0, y), (w, y)], fill=color, width=2)
 
     if show_labels and 'show' in show_labels:
-        font_size = min(max(int(min(spacing_x, spacing_y) * 0.15), 8), 16)
+        font_size = min(max(int(spacing * 0.15), 8), 16)
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", font_size)
         except Exception:
@@ -986,8 +970,7 @@ def save_csv(n_clicks, fluor_data):
     Output('download-settings', 'data'),
     Input('btn-save-settings', 'n_clicks'),
     [State('rotation-slider', 'value'),
-     State('grid-spacing-x-slider', 'value'),
-     State('grid-spacing-y-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('center-point-store', 'data'),
@@ -995,11 +978,10 @@ def save_csv(n_clicks, fluor_data):
      State('show-labels-check', 'value')],
     prevent_initial_call=True
 )
-def save_settings(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, center_point, opacity, show_labels):
+def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels):
     settings = {
         'rotation': rotation,
-        'grid_spacing_x': spacing_x,
-        'grid_spacing_y': spacing_y,
+        'grid_spacing': spacing,
         'grid_x_offset': offset_x,
         'grid_y_offset': offset_y,
         'center_point': center_point or {'x': 0, 'y': 0},
@@ -1012,8 +994,7 @@ def save_settings(n_clicks, rotation, spacing_x, spacing_y, offset_x, offset_y, 
 # ── Load grid settings ────────────────────────────────────────────────
 @app.callback(
     [Output('rotation-slider', 'value'),
-     Output('grid-spacing-x-slider', 'value'),
-     Output('grid-spacing-y-slider', 'value'),
+     Output('grid-spacing-slider', 'value'),
      Output('grid-x-offset-slider', 'value'),
      Output('grid-y-offset-slider', 'value'),
      Output('center-point-store', 'data'),
@@ -1033,11 +1014,10 @@ def load_settings(contents):
         s = json.loads(decoded)
         cp = s.get('center_point', {'x': 0.0, 'y': 0.0})
         # Backward compatibility for old spacing
-        old_spacing = s.get('grid_spacing', 229)
+        old_spacing = s.get('grid_spacing_x', s.get('grid_spacing', 229))
         return (
             s.get('rotation', 0),
-            s.get('grid_spacing_x', old_spacing),
-            s.get('grid_spacing_y', old_spacing),
+            old_spacing,
             s.get('grid_x_offset', 0),
             s.get('grid_y_offset', 0),
             cp,
@@ -1048,7 +1028,6 @@ def load_settings(contents):
         )
     except Exception as e:
         return dash.no_update, dash.no_update, dash.no_update, \
-               dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, \
                f'❌ Error loading settings: {str(e)}'
@@ -1098,8 +1077,7 @@ def update_offsets_from_click(clickData, btn_clicks, placement_mode):
     [Output('grid-x-offset-slider', 'value', allow_duplicate=True),
      Output('grid-y-offset-slider', 'value', allow_duplicate=True),
      Output('rotation-slider', 'value', allow_duplicate=True),
-     Output('grid-spacing-x-slider', 'value', allow_duplicate=True),
-     Output('grid-spacing-y-slider', 'value', allow_duplicate=True),
+     Output('grid-spacing-slider', 'value', allow_duplicate=True),
      Output('grid-opacity-slider', 'value', allow_duplicate=True),
      Output('placement-mode', 'data', allow_duplicate=True),
      Output('placement-status', 'children', allow_duplicate=True)],
@@ -1107,13 +1085,12 @@ def update_offsets_from_click(clickData, btn_clicks, placement_mode):
     [State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('rotation-slider', 'value'),
-     State('grid-spacing-x-slider', 'value'),
-     State('grid-spacing-y-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
      State('grid-opacity-slider', 'value'),
      State('placement-mode', 'data')],
     prevent_initial_call=True
 )
-def handle_keypress(key_data, x_val, y_val, rot_val, space_x_val, space_y_val, op_val, placement_mode):
+def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placement_mode):
     if not key_data:
         raise dash.exceptions.PreventUpdate
         
@@ -1128,13 +1105,13 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_x_val, space_y_val, o
             
     step = 1.0
     if key == 'ArrowLeft':
-        return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
     elif key == 'ArrowRight':
-        return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
     elif key == 'ArrowUp':
-        return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
     elif key == 'ArrowDown':
-        return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
     if key in ['+', '=', '-']:
         if not active_id:
@@ -1146,73 +1123,101 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_x_val, space_y_val, o
         increment = slider_step * direction
         
         if active_id == 'grid-x-offset-slider':
-            return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
         elif active_id == 'grid-y-offset-slider':
-            return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
         elif active_id == 'rotation-slider':
-            return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        elif active_id == 'grid-spacing-x-slider':
-            return dash.no_update, dash.no_update, dash.no_update, space_x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        elif active_id == 'grid-spacing-y-slider':
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, space_y_val + increment, dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-spacing-slider':
+            return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update
         elif active_id == 'grid-opacity-slider':
             val = max(0.0, min(1.0, op_val + increment))
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
             
     raise dash.exceptions.PreventUpdate
 # ── Server callback: Auto-Fit Grid ────────────────────────────────────────
 @app.callback(
-    [Output('grid-spacing-x-slider', 'value', allow_duplicate=True),
-     Output('grid-spacing-y-slider', 'value', allow_duplicate=True),
+    [Output('grid-spacing-slider', 'value', allow_duplicate=True),
      Output('grid-x-offset-slider', 'value', allow_duplicate=True),
      Output('grid-y-offset-slider', 'value', allow_duplicate=True),
      Output('center-point-store', 'data', allow_duplicate=True),
      Output('center-point-display', 'children', allow_duplicate=True),
      Output('status-text', 'children', allow_duplicate=True)],
     Input('btn-autofit', 'n_clicks'),
-    [State('grid-spacing-x-slider', 'value'),
-     State('grid-spacing-y-slider', 'value'),
+    [State('grid-spacing-slider', 'value'),
      State('rotation-slider', 'value')],
     prevent_initial_call=True
 )
-def auto_fit_grid(n_clicks, hint_spacing_x, hint_spacing_y, rotation):
-    if not hint_spacing_x or not hint_spacing_y:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Invalid spacing hints"
+def auto_fit_grid(n_clicks, hint_spacing, rotation):
+    if not hint_spacing:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Invalid spacing hint"
         
     current = _uploaded_image if _uploaded_image is not None else original_image
     rotated = _get_rotated_pil(current, rotation)
     
     # Convert to grayscale numpy array
     gray = np.array(rotated.convert('L'))
+    h, w = gray.shape
     
-    # Thresholding: find all pixels > 10 (assuming background is black/dark)
-    mask = gray > 10
+    # To avoid edge artifacts, process a large central crop (e.g. 1000px if possible)
+    crop_size = min(h, w, 1000)
+    center_y, center_x = h // 2, w // 2
+    crop = gray[center_y - crop_size//2 : center_y + crop_size//2, 
+                center_x - crop_size//2 : center_x + crop_size//2]
+                
+    proj_x = np.sum(crop, axis=0)
+    proj_y = np.sum(crop, axis=1)
     
-    # Find bounding box
-    coords = np.argwhere(mask)
-    if coords.size == 0:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ No image signal found"
+    def get_micro_spacing(profile, expected_range=(10, 50)):
+        # Remove mean
+        profile = profile - np.mean(profile)
+        # Autocorrelation
+        autocorr = np.correlate(profile, profile, mode='full')
+        autocorr = autocorr[len(autocorr)//2:]
+        # Restrict to expected range around the hint
+        search_min = max(2, int(hint_spacing * 0.5))
+        search_max = min(len(autocorr)-1, int(hint_spacing * 1.5))
+        if search_min >= search_max:
+            return None
+            
+        search = autocorr[search_min:search_max]
+        if len(search) == 0:
+            return None
+        return float(np.argmax(search) + search_min)
         
-    y_min, x_min = coords.min(axis=0)
-    y_max, x_max = coords.max(axis=0)
+    spacing_x = get_micro_spacing(proj_x)
+    spacing_y = get_micro_spacing(proj_y)
     
-    box_width = x_max - x_min
-    box_height = y_max - y_min
+    if spacing_x is None or spacing_y is None:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Failed to detect micro-grid"
+        
+    # User specified "perfect square", so we average them
+    spacing = (spacing_x + spacing_y) / 2.0
     
-    # Deduce rows and columns by dividing bounding box by current slider spacing
-    cols = max(1, round(box_width / hint_spacing_x))
-    rows = max(1, round(box_height / hint_spacing_y))
+    # Find the dark spaces (valleys)
+    def get_grid_offset(profile, sp):
+        folded = np.zeros(int(round(sp)))
+        counts = np.zeros(int(round(sp)))
+        for i, val in enumerate(profile):
+            idx = int(round(i % sp))
+            if idx < len(folded):
+                folded[idx] += val
+                counts[idx] += 1
+        avg_folded = folded / np.maximum(counts, 1)
+        return float(np.argmin(avg_folded))
+        
+    offset_x_crop = get_grid_offset(proj_x, spacing)
+    offset_y_crop = get_grid_offset(proj_y, spacing)
     
-    # Calculate perfect spacing
-    spacing_x = box_width / float(cols)
-    spacing_y = box_height / float(rows)
+    # Map crop offset back to full image
+    full_offset_x = (center_x - crop_size//2 + offset_x_crop) % spacing
+    full_offset_y = (center_y - crop_size//2 + offset_y_crop) % spacing
     
-    # Set center point to top-left of the bounding box
-    cp = {'x': float(x_min), 'y': float(y_min)}
-    cp_text = f"Center Point: ({float(x_min):.1f}, {float(y_min):.1f})"
+    # We will clear the center point to (0,0) and just use the offsets
+    cp = {'x': 0.0, 'y': 0.0}
+    cp_text = f"Center Point: (0.0, 0.0)"
     
-    # With center point at top-left, the offset needed is just 0
-    return spacing_x, spacing_y, 0.0, 0.0, cp, cp_text, f"✅ Auto-Fit: {cols} cols, {rows} rows"
+    return spacing, full_offset_x, full_offset_y, cp, cp_text, f"✅ Auto-Fit: Perfect Square size {spacing:.1f}px"
 
 
 if __name__ == '__main__':
