@@ -2,6 +2,7 @@ import dash
 from dash import dcc, html, Input, Output, State, callback_context
 import plotly.graph_objects as go
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+Image.MAX_IMAGE_PIXELS = None
 import numpy as np
 import requests
 from io import BytesIO
@@ -127,7 +128,7 @@ app.layout = html.Div([
                     'borderColor': '#777', 'cursor': 'pointer', 'fontSize': '0.85em'
                 },
                 multiple=False,
-                accept='image/*,.tif,.tiff'
+                accept='image/*,.tif,.tiff,.jpg,.jpeg,.png'
             )
         ]),
 
