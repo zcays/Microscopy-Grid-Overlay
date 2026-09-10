@@ -146,7 +146,7 @@ app.layout = html.Div([
         # ── Sliders ────────────────────────────────────────────────
         html.Div([
             html.Label("Image Rotation (°)", style=_label_style),
-            dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.1, value=0,
+            dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.01, value=0,
                        updatemode='mouseup',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-180, 181, 90)},
@@ -155,7 +155,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Grid Spacing (px)", style=_label_style),
-            dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.1, value=229,
+            dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.001, value=229,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(500, 2001, 500)},
@@ -164,7 +164,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Grid X Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.1, value=0,
+            dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.01, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-2000, 2001, 1000)},
@@ -173,7 +173,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Grid Y Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.1, value=0,
+            dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.01, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-2000, 2001, 1000)},
@@ -188,6 +188,15 @@ app.layout = html.Div([
                               1: {'label': '1', 'style': {'color': '#777'}}},
                        tooltip={"placement": "bottom", "always_visible": False})
         ], style={'marginBottom': '15px'}),
+        
+        # ── Auto-Fit Grid ──────────────────────────────────────────
+        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
+        html.Label("Auto-Fit Grid", style={
+            'color': '#ffffff', 'fontFamily': 'sans-serif',
+            'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
+        }),
+        html.Div("Automatically scale and position the grid to bound all glowing regions. Requires approximate Spacing value above.", style={'color': '#aaaaaa', 'fontSize': '0.8em', 'marginBottom': '10px'}),
+        html.Button("🔍 Auto-Detect & Fit Grid", id='btn-autofit', n_clicks=0, style=_btn_style),
 
         html.Div([
             html.Label("Show Well Labels", style=_label_style),
@@ -1152,6 +1161,309 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
 
     raise dash.exceptions.PreventUpdate
+
+
+@app.callback(
+    [Output('rotation-slider', 'value'),
+     Output('grid-spacing-slider', 'value'),
+     Output('grid-x-offset-slider', 'value'),
+     Output('grid-y-offset-slider', 'value'),
+     Output('center-point-store', 'data'),
+     Output('center-point-display', 'children'),
+     Output('grid-opacity-slider', 'value'),
+     Output('show-labels-check', 'value'),
+     Output('status-text', 'children')],
+    Input('upload-settings', 'contents'),
+    prevent_initial_call=True
+)
+def load_settings(contents):
+    if contents is None:
+        raise dash.exceptions.PreventUpdate
+    try:
+        _, content_string = contents.split(',')
+        decoded = base64.b64decode(content_string).decode('utf-8')
+        s = json.loads(decoded)
+        cp = s.get('center_point', {'x': 0.0, 'y': 0.0})
+        # Backward compatibility for old spacing
+        old_spacing = s.get('grid_spacing_x', s.get('grid_spacing', 229))
+        return (
+            s.get('rotation', 0),
+            old_spacing,
+            s.get('grid_x_offset', 0),
+            s.get('grid_y_offset', 0),
+            cp,
+            f"Center Point: ({cp.get('x', 0)}, {cp.get('y', 0)})",
+            s.get('grid_opacity', 0.7),
+            s.get('show_labels', ['show']),
+            '✅ Settings loaded successfully'
+        )
+    except Exception as e:
+        return dash.no_update, dash.no_update, dash.no_update, \
+               dash.no_update, dash.no_update, dash.no_update, \
+               dash.no_update, dash.no_update, \
+               f'❌ Error loading settings: {str(e)}'
+
+# ── Server callback: Place Center Point ─────────────────────────────────
+@app.callback(
+    [Output('center-point-store', 'data', allow_duplicate=True),
+     Output('center-point-display', 'children', allow_duplicate=True),
+     Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('placement-mode', 'data', allow_duplicate=True),
+     Output('placement-status', 'children')],
+    [Input('image-graph', 'clickData'),
+     Input('btn-place-center', 'n_clicks')],
+    State('placement-mode', 'data'),
+    prevent_initial_call=True
+)
+def update_offsets_from_click(clickData, btn_clicks, placement_mode):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+        
+    trigger_id = ctx.triggered[0]['prop_id']
+    
+    # If the user clicked the "Place Center Point" button
+    if 'btn-place-center' in trigger_id:
+        if placement_mode:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+    
+    # If the user clicked somewhere on the image trace
+    if 'clickData' in trigger_id and clickData:
+        if placement_mode:
+            try:
+                pt = clickData['points'][0]
+                cx, cy = round(pt['x'], 1), round(pt['y'], 1)
+                return {'x': cx, 'y': cy}, f'Center Point: ({cx}, {cy})', 0, 0, False, ''
+            except (KeyError, IndexError):
+                pass
+
+    raise dash.exceptions.PreventUpdate
+
+
+# ── Server callback: Handle Keyboard Shortcuts ──────────────────────────
+@app.callback(
+    [Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('rotation-slider', 'value', allow_duplicate=True),
+     Output('grid-spacing-slider', 'value', allow_duplicate=True),
+     Output('grid-opacity-slider', 'value', allow_duplicate=True),
+     Output('placement-mode', 'data', allow_duplicate=True),
+     Output('placement-status', 'children', allow_duplicate=True)],
+    Input('keypress-store', 'data'),
+    [State('grid-x-offset-slider', 'value'),
+     State('grid-y-offset-slider', 'value'),
+     State('rotation-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
+     State('grid-opacity-slider', 'value'),
+     State('placement-mode', 'data')],
+    prevent_initial_call=True
+)
+def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placement_mode):
+    if not key_data:
+        raise dash.exceptions.PreventUpdate
+        
+    key = key_data.get('key')
+    active_id = key_data.get('active_id')
+    
+    if key in ['w', 'W']:
+        if placement_mode:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+            
+    step = 1.0
+    if key == 'ArrowLeft':
+        return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowRight':
+        return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowUp':
+        return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowDown':
+        return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+    if key in ['+', '=', '-']:
+        if not active_id:
+            raise dash.exceptions.PreventUpdate
+            
+        direction = 1 if key in ['+', '='] else -1
+        # Determine step size based on slider
+        slider_step = 0.1 if active_id in ['grid-opacity-slider', 'rotation-slider'] else 1.0
+        increment = slider_step * direction
+        
+        if active_id == 'grid-x-offset-slider':
+            return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-y-offset-slider':
+            return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'rotation-slider':
+            return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-spacing-slider':
+            return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-opacity-slider':
+            val = max(0.0, min(1.0, op_val + increment))
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
+            
+    raise dash.exceptions.PreventUpdate
+# ── Server callback: Auto-Fit Grid ────────────────────────────────────────
+@app.callback(
+    [Output('rotation-slider', 'value', allow_duplicate=True),
+     Output('grid-spacing-slider', 'value', allow_duplicate=True),
+     Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('center-point-store', 'data', allow_duplicate=True),
+     Output('center-point-display', 'children', allow_duplicate=True),
+     Output('status-text', 'children', allow_duplicate=True)],
+    Input('btn-autofit', 'n_clicks'),
+    [State('grid-spacing-slider', 'value'),
+     State('rotation-slider', 'value')],
+    prevent_initial_call=True
+)
+def auto_fit_grid(n_clicks, hint_spacing, rotation):
+    if not hint_spacing:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Invalid spacing hint"
+        
+    current = _uploaded_image if _uploaded_image is not None else original_image
+    
+    # --- 1. Find Best Rotation ---
+    # We sweep from rotation - 3.0 to rotation + 3.0 degrees
+    # The optimal rotation will have maximum variance in the 1D projections (sharpest valleys)
+    
+    # OPTIMIZATION: Pre-crop and pre-convert to Grayscale ONCE to make rotation sweeps ~100x faster
+    h_full, w_full = current.size[1], current.size[0]
+    target_cells = 20
+    inner_size = min(h_full, w_full, max(200, int(hint_spacing * target_cells)))
+    # Safe crop size must be ~1.5x larger than inner_size so rotation doesn't pull in black corners
+    safe_crop_size = min(h_full, w_full, int(inner_size * 1.5))
+    c_y_full, c_x_full = h_full // 2, w_full // 2
+    rot_base = current.crop((c_x_full - safe_crop_size//2, c_y_full - safe_crop_size//2,
+                             c_x_full + safe_crop_size//2, c_y_full + safe_crop_size//2)).convert('L')
+    
+    def evaluate_rotation(angle):
+        rot_img = rot_base.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=0)
+        arr = np.array(rot_img)
+        rh, rw = arr.shape
+        rc_y, rc_x = rh // 2, rw // 2
+        inner = arr[rc_y - inner_size//2 : rc_y + inner_size//2, 
+                    rc_x - inner_size//2 : rc_x + inner_size//2]
+        
+        px = np.sum(inner, axis=0)
+        py = np.sum(inner, axis=1)
+        
+        # High-pass filter to ignore massive dark spots
+        w_size = max(10, int(hint_spacing * 3))
+        w_size = min(w_size, len(px))
+        px = px - np.convolve(px, np.ones(w_size)/w_size, mode='same')
+        py = py - np.convolve(py, np.ones(w_size)/w_size, mode='same')
+        
+        return np.var(px) + np.var(py)
+
+    best_rotation = rotation
+    best_var = -1
+    # Coarse sweep (-3.0 to +3.0)
+    for angle in np.arange(rotation - 3.0, rotation + 3.1, 0.1):
+        v = evaluate_rotation(angle)
+        if v > best_var:
+            best_var = v
+            best_rotation = angle
+            
+    # Fine sweep (+/- 0.1 around best coarse angle)
+    best_fine_rotation = best_rotation
+    best_fine_var = -1
+    for angle in np.arange(best_rotation - 0.10, best_rotation + 0.11, 0.01):
+        v = evaluate_rotation(angle)
+        if v > best_fine_var:
+            best_fine_var = v
+            best_fine_rotation = round(angle, 2)
+
+    # --- 2. Process with Best Rotation ---
+    rotated = _get_rotated_pil(current, best_fine_rotation)
+    
+    # Convert to grayscale numpy array
+    gray = np.array(rotated.convert('L'))
+    h, w = gray.shape
+    
+    # To avoid edge distortion on dense grids, scale crop size to ~30 grid cells
+    target_cells = 30
+    crop_size = min(h, w, max(200, int(hint_spacing * target_cells)))
+    center_y, center_x = h // 2, w // 2
+    crop = gray[center_y - crop_size//2 : center_y + crop_size//2, 
+                center_x - crop_size//2 : center_x + crop_size//2]
+                
+    proj_x = np.sum(crop, axis=0)
+    proj_y = np.sum(crop, axis=1)
+    
+    def get_micro_spacing(profile, expected_range=(10, 50)):
+        # High-pass filter to remove massive dark spots
+        w_size = max(10, int(hint_spacing * 3))
+        w_size = min(w_size, len(profile))
+        profile = profile - np.convolve(profile, np.ones(w_size)/w_size, mode='same')
+        # Autocorrelation
+        autocorr = np.correlate(profile, profile, mode='full')
+        autocorr = autocorr[len(autocorr)//2:]
+        # Restrict to expected range around the hint, but don't be scared to search wide
+        search_min = max(2, int(hint_spacing * 0.3))
+        search_max = min(len(autocorr)-1, int(hint_spacing * 3.0))
+        if search_min >= search_max:
+            return None
+            
+        search = autocorr[search_min:search_max]
+        if len(search) == 0:
+            return None
+        def get_subpixel_peak(arr):
+            x = np.argmax(arr)
+            if x == 0 or x == len(arr) - 1:
+                return float(x)
+            y1, y2, y3 = arr[x-1], arr[x], arr[x+1]
+            denom = 2 * (y1 - 2*y2 + y3)
+            if denom == 0:
+                return float(x)
+            dx = (y1 - y3) / denom
+            return float(x + dx)
+            
+        return get_subpixel_peak(search) + search_min
+        
+    spacing_x = get_micro_spacing(proj_x)
+    spacing_y = get_micro_spacing(proj_y)
+    
+    if spacing_x is None or spacing_y is None:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Failed to detect micro-grid"
+        
+    # User specified "perfect square", so we average them
+    spacing = (spacing_x + spacing_y) / 2.0
+    
+    # Find the dark spaces (valleys) using robust continuous Fourier Phase extraction
+    def get_grid_offset(profile, sp):
+        t = np.arange(len(profile))
+        omega = 2 * np.pi / sp
+        
+        # Correlate with 1st Fourier component
+        cos_val = np.sum(profile * np.cos(omega * t))
+        sin_val = np.sum(profile * np.sin(omega * t))
+        
+        # Extract phase
+        phi = np.arctan2(sin_val, cos_val)
+        
+        # The phase 'phi' gives the offset of the peaks (bright spots).
+        # We want the valleys (dark spots), so we shift by half a period (pi).
+        t_valley = (phi + np.pi) / omega
+        return t_valley % sp
+        
+    offset_x_crop = get_grid_offset(proj_x, spacing)
+    offset_y_crop = get_grid_offset(proj_y, spacing)
+    
+    # Map crop offset back to full image
+    full_offset_x = (center_x - crop_size//2 + offset_x_crop) % spacing
+    full_offset_y = (center_y - crop_size//2 + offset_y_crop) % spacing
+    
+    # We will clear the center point to (0,0) and just use the offsets
+    cp = {'x': 0.0, 'y': 0.0}
+    cp_text = f"Center Point: (0.0, 0.0)"
+    
+    return best_fine_rotation, spacing, full_offset_x, full_offset_y, cp, cp_text, f"✅ Auto-Fit: Perfect Square {spacing:.3f}px, Rot {best_fine_rotation}°"
+
+
 
 
 if __name__ == '__main__':
