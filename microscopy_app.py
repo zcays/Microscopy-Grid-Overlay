@@ -1128,4 +1128,4 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
 if __name__ == '__main__':
     import sys
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8050
-    app.run(debug=True, port=port)
+    app.run(debug=True, port=port, dev_tools_hot_reload=False)
