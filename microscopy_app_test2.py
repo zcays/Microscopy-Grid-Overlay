@@ -1241,9 +1241,9 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
         # Autocorrelation
         autocorr = np.correlate(profile, profile, mode='full')
         autocorr = autocorr[len(autocorr)//2:]
-        # Restrict to expected range around the hint
-        search_min = max(2, int(hint_spacing * 0.5))
-        search_max = min(len(autocorr)-1, int(hint_spacing * 1.5))
+        # Restrict to expected range around the hint, but don't be scared to search wide
+        search_min = max(2, int(hint_spacing * 0.3))
+        search_max = min(len(autocorr)-1, int(hint_spacing * 3.0))
         if search_min >= search_max:
             return None
             
