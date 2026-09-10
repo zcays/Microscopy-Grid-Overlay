@@ -745,11 +745,18 @@ def update_well_options(img_data, spacing, offset_x, offset_y):
     x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
+    
+    # Prevent OOM crashes by limiting the maximum number of generated options
+    max_options = 1000
     options = []
+    
     for r in range(n_rows):
         for c in range(n_cols):
+            if len(options) >= max_options:
+                return options
             label = _row_label(r) + str(c + 1)
             options.append({'label': label, 'value': f'{r},{c}'})
+            
     return options
 
 
@@ -1091,22 +1098,41 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
         else:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
             
-    step = 1.0
-    if key == 'ArrowLeft':
-        return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    elif key == 'ArrowRight':
-        return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    elif key == 'ArrowUp':
-        return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    elif key == 'ArrowDown':
-        return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        
-    if key in ['+', '=', '-']:
+    if key.startswith('Arrow'):
+        if active_id:
+            # If a slider is focused, arrow keys adjust that slider
+            direction = 1 if key in ['ArrowRight', 'ArrowUp'] else -1
+            slider_step = 0.1 if active_id in ['grid-opacity-slider', 'rotation-slider'] else 1.0
+            increment = slider_step * direction
+            
+            if active_id == 'grid-x-offset-slider':
+                return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif active_id == 'grid-y-offset-slider':
+                return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif active_id == 'rotation-slider':
+                return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif active_id == 'grid-spacing-slider':
+                return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update
+            elif active_id == 'grid-opacity-slider':
+                val = max(0.0, min(1.0, op_val + increment))
+                return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
+        else:
+            # If no slider is focused, arrow keys adjust the grid offset natively
+            step = 1.0
+            if key == 'ArrowLeft':
+                return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif key == 'ArrowRight':
+                return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif key == 'ArrowUp':
+                return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif key == 'ArrowDown':
+                return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                
+    elif key in ['+', '=', '-']:
         if not active_id:
             raise dash.exceptions.PreventUpdate
             
         direction = 1 if key in ['+', '='] else -1
-        # Determine step size based on slider
         slider_step = 0.1 if active_id in ['grid-opacity-slider', 'rotation-slider'] else 1.0
         increment = slider_step * direction
         
@@ -1121,7 +1147,7 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
         elif active_id == 'grid-opacity-slider':
             val = max(0.0, min(1.0, op_val + increment))
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
-            
+
     raise dash.exceptions.PreventUpdate
 
 
