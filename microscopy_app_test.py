@@ -146,7 +146,7 @@ app.layout = html.Div([
         # ── Sliders ────────────────────────────────────────────────
         html.Div([
             html.Label("Image Rotation (°)", style=_label_style),
-            dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.1, value=0,
+            dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.01, value=0,
                        updatemode='mouseup',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-180, 181, 90)},
@@ -155,7 +155,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Grid Spacing (px)", style=_label_style),
-            dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.1, value=229,
+            dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.001, value=229,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(500, 2001, 500)},
@@ -164,7 +164,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Grid X Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.1, value=0,
+            dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.01, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-2000, 2001, 1000)},
@@ -173,7 +173,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Grid Y Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.1, value=0,
+            dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.01, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-2000, 2001, 1000)},
@@ -1180,14 +1180,24 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
 
     best_rotation = rotation
     best_var = -1
+    # Coarse sweep (-3.0 to +3.0)
     for angle in np.arange(rotation - 3.0, rotation + 3.1, 0.1):
         v = evaluate_rotation(angle)
         if v > best_var:
             best_var = v
-            best_rotation = round(angle, 1)
+            best_rotation = angle
+            
+    # Fine sweep (+/- 0.1 around best coarse angle)
+    best_fine_rotation = best_rotation
+    best_fine_var = -1
+    for angle in np.arange(best_rotation - 0.10, best_rotation + 0.11, 0.01):
+        v = evaluate_rotation(angle)
+        if v > best_fine_var:
+            best_fine_var = v
+            best_fine_rotation = round(angle, 2)
 
     # --- 2. Process with Best Rotation ---
-    rotated = _get_rotated_pil(current, best_rotation)
+    rotated = _get_rotated_pil(current, best_fine_rotation)
     
     # Convert to grayscale numpy array
     gray = np.array(rotated.convert('L'))
@@ -1217,7 +1227,18 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
         search = autocorr[search_min:search_max]
         if len(search) == 0:
             return None
-        return float(np.argmax(search) + search_min)
+        def get_subpixel_peak(arr):
+            x = np.argmax(arr)
+            if x == 0 or x == len(arr) - 1:
+                return float(x)
+            y1, y2, y3 = arr[x-1], arr[x], arr[x+1]
+            denom = 2 * (y1 - 2*y2 + y3)
+            if denom == 0:
+                return float(x)
+            dx = (y1 - y3) / denom
+            return float(x + dx)
+            
+        return get_subpixel_peak(search) + search_min
         
     spacing_x = get_micro_spacing(proj_x)
     spacing_y = get_micro_spacing(proj_y)
@@ -1251,7 +1272,7 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
     cp = {'x': 0.0, 'y': 0.0}
     cp_text = f"Center Point: (0.0, 0.0)"
     
-    return best_rotation, spacing, full_offset_x, full_offset_y, cp, cp_text, f"✅ Auto-Fit: Perfect Square {spacing:.1f}px, Rot {best_rotation}°"
+    return best_fine_rotation, spacing, full_offset_x, full_offset_y, cp, cp_text, f"✅ Auto-Fit: Perfect Square {spacing:.3f}px, Rot {best_fine_rotation}°"
 
 
 if __name__ == '__main__':
