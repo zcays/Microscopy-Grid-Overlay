@@ -204,18 +204,7 @@ app.layout = html.Div([
             'color': '#ffffff', 'fontFamily': 'sans-serif',
             'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
         }),
-        html.Div([
-            html.Div([
-                html.Label("Columns:", style=_label_style),
-                dcc.Input(id='autofit-cols', type='number', value=7, min=1, step=1,
-                          style={'width': '60px', 'marginLeft': '5px', 'backgroundColor': '#222', 'color': '#fff', 'border': '1px solid #555'})
-            ], style={'display': 'inline-block', 'marginRight': '15px'}),
-            html.Div([
-                html.Label("Rows:", style=_label_style),
-                dcc.Input(id='autofit-rows', type='number', value=6, min=1, step=1,
-                          style={'width': '60px', 'marginLeft': '5px', 'backgroundColor': '#222', 'color': '#fff', 'border': '1px solid #555'})
-            ], style={'display': 'inline-block'})
-        ], style={'marginBottom': '10px'}),
+        html.Div("Automatically scale and position the grid to bound all glowing regions. Requires approximate Spacing X/Y values above.", style={'color': '#aaaaaa', 'fontSize': '0.8em', 'marginBottom': '10px'}),
         html.Button("🔍 Auto-Detect & Fit Grid", id='btn-autofit', n_clicks=0, style=_btn_style),
 
 
@@ -1181,14 +1170,14 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_x_val, space_y_val, o
      Output('center-point-display', 'children', allow_duplicate=True),
      Output('status-text', 'children', allow_duplicate=True)],
     Input('btn-autofit', 'n_clicks'),
-    [State('autofit-cols', 'value'),
-     State('autofit-rows', 'value'),
+    [State('grid-spacing-x-slider', 'value'),
+     State('grid-spacing-y-slider', 'value'),
      State('rotation-slider', 'value')],
     prevent_initial_call=True
 )
-def auto_fit_grid(n_clicks, cols, rows, rotation):
-    if not cols or not rows:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Invalid cols/rows"
+def auto_fit_grid(n_clicks, hint_spacing_x, hint_spacing_y, rotation):
+    if not hint_spacing_x or not hint_spacing_y:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Invalid spacing hints"
         
     current = _uploaded_image if _uploaded_image is not None else original_image
     rotated = _get_rotated_pil(current, rotation)
@@ -1207,16 +1196,23 @@ def auto_fit_grid(n_clicks, cols, rows, rotation):
     y_min, x_min = coords.min(axis=0)
     y_max, x_max = coords.max(axis=0)
     
-    # Calculate spacing
-    spacing_x = (x_max - x_min) / float(cols)
-    spacing_y = (y_max - y_min) / float(rows)
+    box_width = x_max - x_min
+    box_height = y_max - y_min
+    
+    # Deduce rows and columns by dividing bounding box by current slider spacing
+    cols = max(1, round(box_width / hint_spacing_x))
+    rows = max(1, round(box_height / hint_spacing_y))
+    
+    # Calculate perfect spacing
+    spacing_x = box_width / float(cols)
+    spacing_y = box_height / float(rows)
     
     # Set center point to top-left of the bounding box
     cp = {'x': float(x_min), 'y': float(y_min)}
     cp_text = f"Center Point: ({float(x_min):.1f}, {float(y_min):.1f})"
     
     # With center point at top-left, the offset needed is just 0
-    return spacing_x, spacing_y, 0.0, 0.0, cp, cp_text, "✅ Auto-Fit successful!"
+    return spacing_x, spacing_y, 0.0, 0.0, cp, cp_text, f"✅ Auto-Fit: {cols} cols, {rows} rows"
 
 
 if __name__ == '__main__':
