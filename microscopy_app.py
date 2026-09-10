@@ -134,7 +134,9 @@ app.layout = html.Div([
         # ── Interactive Controls ───────────────────────────────────
         html.Div([
             dcc.Store(id='placement-mode', data=False),
+            dcc.Store(id='center-point-store', data={'x': 0.0, 'y': 0.0}),
             html.Button("🎯 Place Center Point", id='btn-place-center', n_clicks=0, style=_btn_style),
+            html.Div(id='center-point-display', children='Center Point: (0.0, 0.0)', style={'color': '#00ffff', 'fontFamily': 'monospace', 'fontSize': '0.9em', 'marginBottom': '5px', 'textAlign': 'center'}),
             html.Div(id='placement-status', style={'color': '#ffaa00', 'fontFamily': 'sans-serif', 'fontSize': '0.85em', 'marginBottom': '15px', 'textAlign': 'center', 'fontWeight': 'bold'})
         ]),
 
@@ -158,7 +160,7 @@ app.layout = html.Div([
         ], style={'marginBottom': '15px'}),
 
         html.Div([
-            html.Label("Center Point X (px)", style=_label_style),
+            html.Label("Grid X Offset (px)", style=_label_style),
             dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.1, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
@@ -167,15 +169,13 @@ app.layout = html.Div([
         ], style={'marginBottom': '15px'}),
 
         html.Div([
-            html.Label("Center Point Y (px)", style=_label_style),
+            html.Label("Grid Y Offset (px)", style=_label_style),
             dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.1, value=0,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(-2000, 2001, 1000)},
                        tooltip={"placement": "bottom", "always_visible": True})
-        ], style={'marginBottom': '5px'}),
-        
-        html.Div(id='center-point-live-display', style={'color': '#00ffff', 'fontFamily': 'monospace', 'fontSize': '0.9em', 'marginBottom': '15px', 'textAlign': 'center'}),
+        ], style={'marginBottom': '15px'}),
 
         html.Div([
             html.Label("Grid Opacity", style=_label_style),
@@ -357,10 +357,16 @@ def update_image_store(upload_contents, rotation):
 # ── Clientside callback: figure with grid + well labels + fluorescence ──
 app.clientside_callback(
     """
-    function(imgData, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, relayoutData) {
+    function(imgData, centerPoint, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, relayoutData) {
         if (!imgData) {
             return window.dash_clientside.no_update;
         }
+
+        var cx = centerPoint ? centerPoint.x : 0;
+        var cy = centerPoint ? centerPoint.y : 0;
+        
+        var trueOffsetX = cx + offsetX;
+        var trueOffsetY = cy + offsetY;
 
         var b64 = imgData.b64;
         var imgW = imgData.w;
@@ -379,7 +385,7 @@ app.clientside_callback(
         var shapes = [];
 
         // Compute grid line positions
-        var startX = ((offsetX % spacing) + spacing) % spacing;
+        var startX = ((trueOffsetX % spacing) + spacing) % spacing;
         var xPositions = [];
         for (var x = startX; x < imgW; x += spacing) {
             xPositions.push(x);
@@ -390,7 +396,7 @@ app.clientside_callback(
             });
         }
 
-        var startY = ((offsetY % spacing) + spacing) % spacing;
+        var startY = ((trueOffsetY % spacing) + spacing) % spacing;
         var yPositions = [];
         for (var y = startY; y < imgH; y += spacing) {
             yPositions.push(y);
@@ -404,8 +410,8 @@ app.clientside_callback(
         // Add a visible center point shape
         shapes.push({
             type: 'circle',
-            x0: offsetX - 8, y0: offsetY - 8,
-            x1: offsetX + 8, y1: offsetY + 8,
+            x0: trueOffsetX - 8, y0: trueOffsetY - 8,
+            x1: trueOffsetX + 8, y1: trueOffsetY + 8,
             line: {color: 'rgba(255, 50, 50, 0.9)', width: 2},
             fillcolor: 'rgba(255, 255, 255, 0.5)',
             name: 'center-point'
@@ -483,8 +489,8 @@ app.clientside_callback(
             data: [{
                 type: 'image',
                 source: b64,
-                x0: 0,
-                y0: 0,
+                x0: dx / 2,
+                y0: dy / 2,
                 dx: dx,
                 dy: dy,
                 hoverinfo: 'none'
@@ -526,6 +532,7 @@ app.clientside_callback(
     """,
     Output('image-graph', 'figure'),
     [Input('image-store', 'data'),
+     Input('center-point-store', 'data'),
      Input('grid-spacing-slider', 'value'),
      Input('grid-x-offset-slider', 'value'),
      Input('grid-y-offset-slider', 'value'),
@@ -534,19 +541,6 @@ app.clientside_callback(
      Input('fluor-store', 'data'),
      Input('show-fluor-check', 'value')],
     [State('image-graph', 'relayoutData')]
-)
-
-# ── Clientside callback: update center point live display ──────────────
-app.clientside_callback(
-    """
-    function(x, y) {
-        if (x === undefined || y === undefined) return '';
-        return 'Center Point Selected: (' + x.toFixed(1) + ', ' + y.toFixed(1) + ')';
-    }
-    """,
-    Output('center-point-live-display', 'children'),
-    [Input('grid-x-offset-slider', 'value'),
-     Input('grid-y-offset-slider', 'value')]
 )
 
 # ── Helper: compute grid positions ─────────────────────────────────────
@@ -575,15 +569,21 @@ def _grid_positions(spacing, offset_x, offset_y, w, h):
      State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
+     State('center-point-store', 'data'),
      State('fluor-channel', 'value')],
     prevent_initial_call=True
 )
-def compute_fluorescence(n_clicks, rotation, spacing, offset_x, offset_y, channel):
+def compute_fluorescence(n_clicks, rotation, spacing, offset_x, offset_y, center_point, channel):
+    cx = center_point.get('x', 0) if center_point else 0
+    cy = center_point.get('y', 0) if center_point else 0
+    true_offset_x = cx + offset_x
+    true_offset_y = cy + offset_y
+
     current = _uploaded_image if _uploaded_image is not None else original_image
     rotated = _get_rotated_pil(current, rotation)
     arr = np.array(rotated)
     w, h = rotated.size
-    x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
+    x_pos, y_pos = _grid_positions(spacing, true_offset_x, true_offset_y, w, h)
 
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
@@ -925,16 +925,18 @@ def save_csv(n_clicks, fluor_data):
      State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
+     State('center-point-store', 'data'),
      State('grid-opacity-slider', 'value'),
      State('show-labels-check', 'value')],
     prevent_initial_call=True
 )
-def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels):
+def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels):
     settings = {
         'rotation': rotation,
         'grid_spacing': spacing,
         'grid_x_offset': offset_x,
         'grid_y_offset': offset_y,
+        'center_point': center_point or {'x': 0, 'y': 0},
         'grid_opacity': opacity,
         'show_labels': show_labels
     }
@@ -947,6 +949,8 @@ def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show
      Output('grid-spacing-slider', 'value'),
      Output('grid-x-offset-slider', 'value'),
      Output('grid-y-offset-slider', 'value'),
+     Output('center-point-store', 'data'),
+     Output('center-point-display', 'children'),
      Output('grid-opacity-slider', 'value'),
      Output('show-labels-check', 'value'),
      Output('status-text', 'children')],
@@ -960,11 +964,14 @@ def load_settings(contents):
         _, content_string = contents.split(',')
         decoded = base64.b64decode(content_string).decode('utf-8')
         s = json.loads(decoded)
+        cp = s.get('center_point', {'x': 0.0, 'y': 0.0})
         return (
             s.get('rotation', 0),
             s.get('grid_spacing', 229),
             s.get('grid_x_offset', 0),
             s.get('grid_y_offset', 0),
+            cp,
+            f"Center Point: ({cp.get('x', 0)}, {cp.get('y', 0)})",
             s.get('grid_opacity', 0.7),
             s.get('show_labels', ['show']),
             '✅ Settings loaded successfully'
@@ -972,12 +979,14 @@ def load_settings(contents):
     except Exception as e:
         return dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, dash.no_update, \
+               dash.no_update, dash.no_update, \
                f'❌ Error loading settings: {str(e)}'
-
 
 # ── Server callback: Place Center Point ─────────────────────────────────
 @app.callback(
-    [Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+    [Output('center-point-store', 'data', allow_duplicate=True),
+     Output('center-point-display', 'children', allow_duplicate=True),
+     Output('grid-x-offset-slider', 'value', allow_duplicate=True),
      Output('grid-y-offset-slider', 'value', allow_duplicate=True),
      Output('placement-mode', 'data', allow_duplicate=True),
      Output('placement-status', 'children')],
@@ -995,15 +1004,15 @@ def update_offsets_from_click(clickData, btn_clicks, placement_mode):
     
     # If the user clicked the "Place Center Point" button
     if 'btn-place-center' in trigger_id:
-        return dash.no_update, dash.no_update, True, 'Select a point on the image...'
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
     
     # If the user clicked somewhere on the image trace
     if 'clickData' in trigger_id and clickData:
         if placement_mode:
             try:
                 pt = clickData['points'][0]
-                # pt['x'] and pt['y'] are exact coordinates on the image trace
-                return round(pt['x'], 1), round(pt['y'], 1), False, ''
+                cx, cy = round(pt['x'], 1), round(pt['y'], 1)
+                return {'x': cx, 'y': cy}, f'Center Point: ({cx}, {cy})', 0, 0, False, ''
             except (KeyError, IndexError):
                 pass
 
