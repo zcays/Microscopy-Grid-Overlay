@@ -1140,7 +1140,8 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
     raise dash.exceptions.PreventUpdate
 # ── Server callback: Auto-Fit Grid ────────────────────────────────────────
 @app.callback(
-    [Output('grid-spacing-slider', 'value', allow_duplicate=True),
+    [Output('rotation-slider', 'value', allow_duplicate=True),
+     Output('grid-spacing-slider', 'value', allow_duplicate=True),
      Output('grid-x-offset-slider', 'value', allow_duplicate=True),
      Output('grid-y-offset-slider', 'value', allow_duplicate=True),
      Output('center-point-store', 'data', allow_duplicate=True),
@@ -1156,7 +1157,30 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "❌ Invalid spacing hint"
         
     current = _uploaded_image if _uploaded_image is not None else original_image
-    rotated = _get_rotated_pil(current, rotation)
+    
+    # --- 1. Find Best Rotation ---
+    # We sweep from rotation - 3.0 to rotation + 3.0 degrees
+    # The optimal rotation will have maximum variance in the 1D projections (sharpest valleys)
+    def evaluate_rotation(angle):
+        rot_img = current.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=0)
+        arr = np.array(rot_img.convert('L'))
+        h, w = arr.shape
+        inner_size = min(h, w, 600)
+        c_y, c_x = h // 2, w // 2
+        inner = arr[c_y - inner_size//2 : c_y + inner_size//2, 
+                    c_x - inner_size//2 : c_x + inner_size//2]
+        return np.var(np.sum(inner, axis=0)) + np.var(np.sum(inner, axis=1))
+
+    best_rotation = rotation
+    best_var = -1
+    for angle in np.arange(rotation - 3.0, rotation + 3.1, 0.1):
+        v = evaluate_rotation(angle)
+        if v > best_var:
+            best_var = v
+            best_rotation = round(angle, 1)
+
+    # --- 2. Process with Best Rotation ---
+    rotated = _get_rotated_pil(current, best_rotation)
     
     # Convert to grayscale numpy array
     gray = np.array(rotated.convert('L'))
@@ -1220,7 +1244,7 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
     cp = {'x': 0.0, 'y': 0.0}
     cp_text = f"Center Point: (0.0, 0.0)"
     
-    return spacing, full_offset_x, full_offset_y, cp, cp_text, f"✅ Auto-Fit: Perfect Square size {spacing:.1f}px"
+    return best_rotation, spacing, full_offset_x, full_offset_y, cp, cp_text, f"✅ Auto-Fit: Perfect Square {spacing:.1f}px, Rot {best_rotation}°"
 
 
 if __name__ == '__main__':
