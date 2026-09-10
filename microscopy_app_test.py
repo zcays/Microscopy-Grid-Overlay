@@ -1264,27 +1264,22 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
     # User specified "perfect square", so we average them
     spacing = (spacing_x + spacing_y) / 2.0
     
-    # Find the dark spaces (valleys) with subpixel precision
+    # Find the dark spaces (valleys) using robust continuous Fourier Phase extraction
     def get_grid_offset(profile, sp):
-        folded = np.zeros(int(round(sp)))
-        counts = np.zeros(int(round(sp)))
-        for i, val in enumerate(profile):
-            idx = int(round(i % sp))
-            if idx < len(folded):
-                folded[idx] += val
-                counts[idx] += 1
-        avg_folded = folded / np.maximum(counts, 1)
+        t = np.arange(len(profile))
+        omega = 2 * np.pi / sp
         
-        # Subpixel interpolation for minimum
-        x = np.argmin(avg_folded)
-        if x == 0 or x == len(avg_folded) - 1:
-            return float(x)
-        y1, y2, y3 = avg_folded[x-1], avg_folded[x], avg_folded[x+1]
-        denom = 2 * (y1 - 2*y2 + y3)
-        if denom == 0:
-            return float(x)
-        dx = (y1 - y3) / denom
-        return float(x + dx)
+        # Correlate with 1st Fourier component
+        cos_val = np.sum(profile * np.cos(omega * t))
+        sin_val = np.sum(profile * np.sin(omega * t))
+        
+        # Extract phase
+        phi = np.arctan2(sin_val, cos_val)
+        
+        # The phase 'phi' gives the offset of the peaks (bright spots).
+        # We want the valleys (dark spots), so we shift by half a period (pi).
+        t_valley = (phi + np.pi) / omega
+        return t_valley % sp
         
     offset_x_crop = get_grid_offset(proj_x, spacing)
     offset_y_crop = get_grid_offset(proj_y, spacing)
