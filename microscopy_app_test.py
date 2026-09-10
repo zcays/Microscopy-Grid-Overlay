@@ -1176,7 +1176,17 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
         c_y, c_x = h // 2, w // 2
         inner = arr[c_y - inner_size//2 : c_y + inner_size//2, 
                     c_x - inner_size//2 : c_x + inner_size//2]
-        return np.var(np.sum(inner, axis=0)) + np.var(np.sum(inner, axis=1))
+        
+        px = np.sum(inner, axis=0)
+        py = np.sum(inner, axis=1)
+        
+        # High-pass filter to ignore massive dark spots
+        w_size = max(10, int(hint_spacing * 3))
+        w_size = min(w_size, len(px))
+        px = px - np.convolve(px, np.ones(w_size)/w_size, mode='same')
+        py = py - np.convolve(py, np.ones(w_size)/w_size, mode='same')
+        
+        return np.var(px) + np.var(py)
 
     best_rotation = rotation
     best_var = -1
@@ -1213,8 +1223,10 @@ def auto_fit_grid(n_clicks, hint_spacing, rotation):
     proj_y = np.sum(crop, axis=1)
     
     def get_micro_spacing(profile, expected_range=(10, 50)):
-        # Remove mean
-        profile = profile - np.mean(profile)
+        # High-pass filter to remove massive dark spots
+        w_size = max(10, int(hint_spacing * 3))
+        w_size = min(w_size, len(profile))
+        profile = profile - np.convolve(profile, np.ones(w_size)/w_size, mode='same')
         # Autocorrelation
         autocorr = np.correlate(profile, profile, mode='full')
         autocorr = autocorr[len(autocorr)//2:]
