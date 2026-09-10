@@ -1102,9 +1102,9 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
     
     if key in ['w', 'W']:
         if placement_mode:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
         else:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
             
     step = 1.0
     if key == 'ArrowLeft':
