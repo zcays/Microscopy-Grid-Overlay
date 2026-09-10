@@ -1,7 +1,7 @@
 import dash
 from dash import dcc, html, Input, Output, State, callback_context
 import plotly.graph_objects as go
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import numpy as np
 import requests
 from io import BytesIO
@@ -15,7 +15,7 @@ app = dash.Dash(__name__, title="Microscopy Grid Aligner")
 try:
     url = "https://raw.githubusercontent.com/scikit-image/scikit-image/main/skimage/data/immunohistochemistry.png"
     response = requests.get(url, timeout=5)
-    original_image = Image.open(BytesIO(response.content)).convert('RGB')
+    original_image = ImageOps.exif_transpose(Image.open(BytesIO(response.content))).convert('RGB')
 except Exception:
     img_array = np.zeros((800, 800, 3), dtype=np.uint8)
     for i in range(0, 800, 80):
@@ -46,11 +46,17 @@ def _get_rotated_data(img, rotation):
         if rotation == 0:
             rotated = img
         else:
-            rotated = img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+            rotated = img.rotate(-rotation, expand=True, resample=Image.BILINEAR)
+        # Create a lightweight preview for the browser UI to avoid WebGL lag
+        preview = rotated.copy()
+        preview.thumbnail((2000, 2000), Image.BILINEAR)
+
         _rotation_cache[cache_key] = {
-            'b64': _pil_to_b64(rotated),
+            'b64': _pil_to_b64(preview),
             'w': rotated.size[0],
             'h': rotated.size[1],
+            'pw': preview.size[0],
+            'ph': preview.size[1],
             'img': rotated
         }
         if len(_rotation_cache) > 20:
@@ -120,46 +126,63 @@ app.layout = html.Div([
                     'marginBottom': '15px', 'color': '#bbbbbb',
                     'borderColor': '#777', 'cursor': 'pointer', 'fontSize': '0.85em'
                 },
-                multiple=False
+                multiple=False,
+                accept='image/*,.tif,.tiff'
             )
+        ]),
+
+        # ── Interactive Controls ───────────────────────────────────
+        html.Div([
+            dcc.Store(id='placement-mode', data=False),
+            dcc.Store(id='center-point-store', data={'x': 0.0, 'y': 0.0}),
+            dcc.Store(id='keypress-store'),
+            html.Div(id='dummy-listener'),
+            html.Button("🎯 Place Center Point (W)", id='btn-place-center', n_clicks=0, style=_btn_style),
+            html.Div(id='center-point-display', children='Center Point: (0.0, 0.0)', style={'color': '#00ffff', 'fontFamily': 'monospace', 'fontSize': '0.9em', 'marginBottom': '5px', 'textAlign': 'center'}),
+            html.Div(id='placement-status', style={'color': '#ffaa00', 'fontFamily': 'sans-serif', 'fontSize': '0.85em', 'marginBottom': '15px', 'textAlign': 'center', 'fontWeight': 'bold'})
         ]),
 
         # ── Sliders ────────────────────────────────────────────────
         html.Div([
             html.Label("Image Rotation (°)", style=_label_style),
-            dcc.Slider(id='rotation-slider', min=0, max=360, step=0.1, value=0,
+            dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.1, value=0,
+                       updatemode='mouseup',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(0, 361, 90)},
+                              for i in range(-180, 181, 90)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
 
         html.Div([
             html.Label("Grid Spacing (px)", style=_label_style),
-            dcc.Slider(id='grid-spacing-slider', min=10, max=400, step=0.1, value=300,
+            dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.1, value=229,
+                       updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(50, 401, 100)},
+                              for i in range(500, 2001, 500)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
 
         html.Div([
             html.Label("Grid X Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-x-offset-slider', min=-200, max=200, step=0.1, value=0,
+            dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.1, value=0,
+                       updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(-200, 201, 100)},
+                              for i in range(-2000, 2001, 1000)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
 
         html.Div([
             html.Label("Grid Y Offset (px)", style=_label_style),
-            dcc.Slider(id='grid-y-offset-slider', min=-200, max=200, step=0.1, value=0,
+            dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.1, value=0,
+                       updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
-                              for i in range(-200, 201, 100)},
+                              for i in range(-2000, 2001, 1000)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
 
         html.Div([
             html.Label("Grid Opacity", style=_label_style),
             dcc.Slider(id='grid-opacity-slider', min=0, max=1, step=0.1, value=0.7,
+                       updatemode='drag',
                        marks={0: {'label': '0', 'style': {'color': '#777'}},
                               1: {'label': '1', 'style': {'color': '#777'}}},
                        tooltip={"placement": "bottom", "always_visible": False})
@@ -320,30 +343,46 @@ app.layout = html.Div([
 def update_image_store(upload_contents, rotation):
     global _uploaded_image
     ctx = dash.callback_context
-    if ctx.triggered and ctx.triggered[0]['prop_id'] == 'upload-image.contents':
+    
+    # On initial page load/refresh, Dash triggers without a specific property
+    if not ctx.triggered or ctx.triggered[0]['prop_id'] == '.':
+        _uploaded_image = None
+        
+    elif ctx.triggered and ctx.triggered[0]['prop_id'] == 'upload-image.contents':
         if upload_contents is not None:
             try:
                 _, content_string = upload_contents.split(',')
                 decoded = base64.b64decode(content_string)
-                _uploaded_image = Image.open(BytesIO(decoded)).convert('RGB')
+                _uploaded_image = ImageOps.exif_transpose(Image.open(BytesIO(decoded))).convert('RGB')
             except Exception:
                 pass
     current = _uploaded_image if _uploaded_image is not None else original_image
     data = _get_rotated_data(current, rotation)
-    return {'b64': data['b64'], 'w': data['w'], 'h': data['h']}
+    return {'b64': data['b64'], 'w': data['w'], 'h': data['h'], 'pw': data['pw'], 'ph': data['ph']}
 
 
 # ── Clientside callback: figure with grid + well labels + fluorescence ──
 app.clientside_callback(
     """
-    function(imgData, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, relayoutData) {
+    function(imgData, centerPoint, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, relayoutData) {
         if (!imgData) {
             return window.dash_clientside.no_update;
         }
 
+        var cx = centerPoint ? centerPoint.x : 0;
+        var cy = centerPoint ? centerPoint.y : 0;
+        
+        var trueOffsetX = cx + offsetX;
+        var trueOffsetY = cy + offsetY;
+
         var b64 = imgData.b64;
         var imgW = imgData.w;
         var imgH = imgData.h;
+        var previewW = imgData.pw || imgW;
+        var previewH = imgData.ph || imgH;
+        var dx = imgW / previewW;
+        var dy = imgH / previewH;
+        
         var gridColor = 'rgba(0, 255, 255, ' + gridOpacity + ')';
         var spacing = Math.max(gridSpacing, 1);
         var doLabels = showLabels && showLabels.indexOf('show') !== -1;
@@ -353,25 +392,37 @@ app.clientside_callback(
         var shapes = [];
 
         // Compute grid line positions
-        var startX = ((offsetX % spacing) + spacing) % spacing;
+        var startX = ((trueOffsetX % spacing) + spacing) % spacing;
         var xPositions = [];
         for (var x = startX; x < imgW; x += spacing) {
             xPositions.push(x);
             shapes.push({
                 type: 'line', x0: x, x1: x, y0: 0, y1: imgH,
-                line: {color: gridColor, width: 1.5}
+                line: {color: gridColor, width: 1.5},
+                editable: false
             });
         }
 
-        var startY = ((offsetY % spacing) + spacing) % spacing;
+        var startY = ((trueOffsetY % spacing) + spacing) % spacing;
         var yPositions = [];
         for (var y = startY; y < imgH; y += spacing) {
             yPositions.push(y);
             shapes.push({
                 type: 'line', x0: 0, x1: imgW, y0: y, y1: y,
-                line: {color: gridColor, width: 1.5}
+                line: {color: gridColor, width: 1.5},
+                editable: false
             });
         }
+
+        // Add a visible center point shape
+        shapes.push({
+            type: 'circle',
+            x0: trueOffsetX - 8, y0: trueOffsetY - 8,
+            x1: trueOffsetX + 8, y1: trueOffsetY + 8,
+            line: {color: 'rgba(255, 50, 50, 0.9)', width: 2},
+            fillcolor: 'rgba(255, 255, 255, 0.5)',
+            name: 'center-point'
+        });
 
         // Build axis tick labels centered in each box
         var xTickVals = [];
@@ -442,23 +493,23 @@ app.clientside_callback(
         var topMargin = doLabels ? 25 : 0;
 
         return {
-            data: [],
+            data: [{
+                type: 'image',
+                source: b64,
+                x0: dx / 2,
+                y0: dy / 2,
+                dx: dx,
+                dy: dy,
+                hoverinfo: 'none'
+            }],
             layout: {
-                images: [{
-                    source: b64,
-                    xref: 'x', yref: 'y',
-                    x: 0, y: 0,
-                    sizex: imgW, sizey: imgH,
-                    sizing: 'stretch',
-                    layer: 'below'
-                }],
                 shapes: shapes,
                 annotations: annotations,
                 xaxis: {
                     range: xRange,
                     showgrid: false, zeroline: false,
                     title: '',
-                    constrain: 'range', scaleanchor: 'y',
+                    scaleanchor: 'y',
                     side: 'top',
                     showticklabels: doLabels,
                     tickvals: xTickVals,
@@ -470,7 +521,6 @@ app.clientside_callback(
                     range: yRange,
                     showgrid: false, zeroline: false,
                     title: '',
-                    constrain: 'range',
                     side: 'left',
                     showticklabels: doLabels,
                     tickvals: yTickVals,
@@ -481,13 +531,15 @@ app.clientside_callback(
                 margin: {l: leftMargin, r: 0, t: topMargin, b: 0},
                 plot_bgcolor: '#000000',
                 paper_bgcolor: '#000000',
-                uirevision: 'constant'
+                uirevision: 'constant',
+                dragmode: 'pan'
             }
         };
     }
     """,
     Output('image-graph', 'figure'),
     [Input('image-store', 'data'),
+     Input('center-point-store', 'data'),
      Input('grid-spacing-slider', 'value'),
      Input('grid-x-offset-slider', 'value'),
      Input('grid-y-offset-slider', 'value'),
@@ -498,6 +550,35 @@ app.clientside_callback(
     [State('image-graph', 'relayoutData')]
 )
 
+# ── Clientside callback: Global Keypress Listener ──────────────────────
+app.clientside_callback(
+    """
+    function(id) {
+        if (!window._keydown_listener_added) {
+            window._keydown_listener_added = true;
+            document.addEventListener('keydown', function(e) {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                var key = e.key;
+                if (['w', 'W', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-'].includes(key)) {
+                    if (key.startsWith('Arrow')) e.preventDefault();
+                    
+                    var activeId = null;
+                    if (document.activeElement) {
+                        var sliderParent = document.activeElement.closest('[id$="-slider"]');
+                        if (sliderParent) {
+                            activeId = sliderParent.id;
+                        }
+                    }
+                    window.dash_clientside.set_props('keypress-store', {data: {key: key, ts: Date.now(), active_id: activeId}});
+                }
+            });
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('dummy-listener', 'children'),
+    Input('dummy-listener', 'id')
+)
 
 # ── Helper: compute grid positions ─────────────────────────────────────
 def _grid_positions(spacing, offset_x, offset_y, w, h):
@@ -525,15 +606,21 @@ def _grid_positions(spacing, offset_x, offset_y, w, h):
      State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
+     State('center-point-store', 'data'),
      State('fluor-channel', 'value')],
     prevent_initial_call=True
 )
-def compute_fluorescence(n_clicks, rotation, spacing, offset_x, offset_y, channel):
+def compute_fluorescence(n_clicks, rotation, spacing, offset_x, offset_y, center_point, channel):
+    cx = center_point.get('x', 0) if center_point else 0
+    cy = center_point.get('y', 0) if center_point else 0
+    true_offset_x = cx + offset_x
+    true_offset_y = cy + offset_y
+
     current = _uploaded_image if _uploaded_image is not None else original_image
     rotated = _get_rotated_pil(current, rotation)
     arr = np.array(rotated)
     w, h = rotated.size
-    x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
+    x_pos, y_pos = _grid_positions(spacing, true_offset_x, true_offset_y, w, h)
 
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
@@ -875,16 +962,18 @@ def save_csv(n_clicks, fluor_data):
      State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
+     State('center-point-store', 'data'),
      State('grid-opacity-slider', 'value'),
      State('show-labels-check', 'value')],
     prevent_initial_call=True
 )
-def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels):
+def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels):
     settings = {
         'rotation': rotation,
         'grid_spacing': spacing,
         'grid_x_offset': offset_x,
         'grid_y_offset': offset_y,
+        'center_point': center_point or {'x': 0, 'y': 0},
         'grid_opacity': opacity,
         'show_labels': show_labels
     }
@@ -897,6 +986,8 @@ def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show
      Output('grid-spacing-slider', 'value'),
      Output('grid-x-offset-slider', 'value'),
      Output('grid-y-offset-slider', 'value'),
+     Output('center-point-store', 'data'),
+     Output('center-point-display', 'children'),
      Output('grid-opacity-slider', 'value'),
      Output('show-labels-check', 'value'),
      Output('status-text', 'children')],
@@ -910,11 +1001,14 @@ def load_settings(contents):
         _, content_string = contents.split(',')
         decoded = base64.b64decode(content_string).decode('utf-8')
         s = json.loads(decoded)
+        cp = s.get('center_point', {'x': 0.0, 'y': 0.0})
         return (
             s.get('rotation', 0),
-            s.get('grid_spacing', 300),
+            s.get('grid_spacing', 229),
             s.get('grid_x_offset', 0),
             s.get('grid_y_offset', 0),
+            cp,
+            f"Center Point: ({cp.get('x', 0)}, {cp.get('y', 0)})",
             s.get('grid_opacity', 0.7),
             s.get('show_labels', ['show']),
             '✅ Settings loaded successfully'
@@ -922,7 +1016,112 @@ def load_settings(contents):
     except Exception as e:
         return dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, dash.no_update, \
+               dash.no_update, dash.no_update, \
                f'❌ Error loading settings: {str(e)}'
+
+# ── Server callback: Place Center Point ─────────────────────────────────
+@app.callback(
+    [Output('center-point-store', 'data', allow_duplicate=True),
+     Output('center-point-display', 'children', allow_duplicate=True),
+     Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('placement-mode', 'data', allow_duplicate=True),
+     Output('placement-status', 'children')],
+    [Input('image-graph', 'clickData'),
+     Input('btn-place-center', 'n_clicks')],
+    State('placement-mode', 'data'),
+    prevent_initial_call=True
+)
+def update_offsets_from_click(clickData, btn_clicks, placement_mode):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+        
+    trigger_id = ctx.triggered[0]['prop_id']
+    
+    # If the user clicked the "Place Center Point" button
+    if 'btn-place-center' in trigger_id:
+        if placement_mode:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+    
+    # If the user clicked somewhere on the image trace
+    if 'clickData' in trigger_id and clickData:
+        if placement_mode:
+            try:
+                pt = clickData['points'][0]
+                cx, cy = round(pt['x'], 1), round(pt['y'], 1)
+                return {'x': cx, 'y': cy}, f'Center Point: ({cx}, {cy})', 0, 0, False, ''
+            except (KeyError, IndexError):
+                pass
+
+    raise dash.exceptions.PreventUpdate
+
+
+# ── Server callback: Handle Keyboard Shortcuts ──────────────────────────
+@app.callback(
+    [Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('rotation-slider', 'value', allow_duplicate=True),
+     Output('grid-spacing-slider', 'value', allow_duplicate=True),
+     Output('grid-opacity-slider', 'value', allow_duplicate=True),
+     Output('placement-mode', 'data', allow_duplicate=True),
+     Output('placement-status', 'children', allow_duplicate=True)],
+    Input('keypress-store', 'data'),
+    [State('grid-x-offset-slider', 'value'),
+     State('grid-y-offset-slider', 'value'),
+     State('rotation-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
+     State('grid-opacity-slider', 'value'),
+     State('placement-mode', 'data')],
+    prevent_initial_call=True
+)
+def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placement_mode):
+    if not key_data:
+        raise dash.exceptions.PreventUpdate
+        
+    key = key_data.get('key')
+    active_id = key_data.get('active_id')
+    
+    if key in ['w', 'W']:
+        if placement_mode:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+            
+    step = 1.0
+    if key == 'ArrowLeft':
+        return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowRight':
+        return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowUp':
+        return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowDown':
+        return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+    if key in ['+', '=', '-']:
+        if not active_id:
+            raise dash.exceptions.PreventUpdate
+            
+        direction = 1 if key in ['+', '='] else -1
+        # Determine step size based on slider
+        slider_step = 0.1 if active_id in ['grid-opacity-slider', 'rotation-slider'] else 1.0
+        increment = slider_step * direction
+        
+        if active_id == 'grid-x-offset-slider':
+            return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-y-offset-slider':
+            return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'rotation-slider':
+            return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-spacing-slider':
+            return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-opacity-slider':
+            val = max(0.0, min(1.0, op_val + increment))
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
+            
+    raise dash.exceptions.PreventUpdate
 
 
 if __name__ == '__main__':

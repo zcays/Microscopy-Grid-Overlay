@@ -135,7 +135,9 @@ app.layout = html.Div([
         html.Div([
             dcc.Store(id='placement-mode', data=False),
             dcc.Store(id='center-point-store', data={'x': 0.0, 'y': 0.0}),
-            html.Button("🎯 Place Center Point", id='btn-place-center', n_clicks=0, style=_btn_style),
+            dcc.Store(id='keypress-store'),
+            html.Div(id='dummy-listener'),
+            html.Button("🎯 Place Center Point (W)", id='btn-place-center', n_clicks=0, style=_btn_style),
             html.Div(id='center-point-display', children='Center Point: (0.0, 0.0)', style={'color': '#00ffff', 'fontFamily': 'monospace', 'fontSize': '0.9em', 'marginBottom': '5px', 'textAlign': 'center'}),
             html.Div(id='placement-status', style={'color': '#ffaa00', 'fontFamily': 'sans-serif', 'fontSize': '0.85em', 'marginBottom': '15px', 'textAlign': 'center', 'fontWeight': 'bold'})
         ]),
@@ -341,7 +343,12 @@ app.layout = html.Div([
 def update_image_store(upload_contents, rotation):
     global _uploaded_image
     ctx = dash.callback_context
-    if ctx.triggered and ctx.triggered[0]['prop_id'] == 'upload-image.contents':
+    
+    # On initial page load/refresh, Dash triggers without a specific property
+    if not ctx.triggered or ctx.triggered[0]['prop_id'] == '.':
+        _uploaded_image = None
+        
+    elif ctx.triggered and ctx.triggered[0]['prop_id'] == 'upload-image.contents':
         if upload_contents is not None:
             try:
                 _, content_string = upload_contents.split(',')
@@ -541,6 +548,36 @@ app.clientside_callback(
      Input('fluor-store', 'data'),
      Input('show-fluor-check', 'value')],
     [State('image-graph', 'relayoutData')]
+)
+
+# ── Clientside callback: Global Keypress Listener ──────────────────────
+app.clientside_callback(
+    """
+    function(id) {
+        if (!window._keydown_listener_added) {
+            window._keydown_listener_added = true;
+            document.addEventListener('keydown', function(e) {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                var key = e.key;
+                if (['w', 'W', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-'].includes(key)) {
+                    if (key.startsWith('Arrow')) e.preventDefault();
+                    
+                    var activeId = null;
+                    if (document.activeElement) {
+                        var sliderParent = document.activeElement.closest('[id$="-slider"]');
+                        if (sliderParent) {
+                            activeId = sliderParent.id;
+                        }
+                    }
+                    window.dash_clientside.set_props('keypress-store', {data: {key: key, ts: Date.now(), active_id: activeId}});
+                }
+            });
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('dummy-listener', 'children'),
+    Input('dummy-listener', 'id')
 )
 
 # ── Helper: compute grid positions ─────────────────────────────────────
@@ -1004,7 +1041,10 @@ def update_offsets_from_click(clickData, btn_clicks, placement_mode):
     
     # If the user clicked the "Place Center Point" button
     if 'btn-place-center' in trigger_id:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+        if placement_mode:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
     
     # If the user clicked somewhere on the image trace
     if 'clickData' in trigger_id and clickData:
@@ -1016,6 +1056,71 @@ def update_offsets_from_click(clickData, btn_clicks, placement_mode):
             except (KeyError, IndexError):
                 pass
 
+    raise dash.exceptions.PreventUpdate
+
+
+# ── Server callback: Handle Keyboard Shortcuts ──────────────────────────
+@app.callback(
+    [Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('rotation-slider', 'value', allow_duplicate=True),
+     Output('grid-spacing-slider', 'value', allow_duplicate=True),
+     Output('grid-opacity-slider', 'value', allow_duplicate=True),
+     Output('placement-mode', 'data', allow_duplicate=True),
+     Output('placement-status', 'children', allow_duplicate=True)],
+    Input('keypress-store', 'data'),
+    [State('grid-x-offset-slider', 'value'),
+     State('grid-y-offset-slider', 'value'),
+     State('rotation-slider', 'value'),
+     State('grid-spacing-slider', 'value'),
+     State('grid-opacity-slider', 'value'),
+     State('placement-mode', 'data')],
+    prevent_initial_call=True
+)
+def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placement_mode):
+    if not key_data:
+        raise dash.exceptions.PreventUpdate
+        
+    key = key_data.get('key')
+    active_id = key_data.get('active_id')
+    
+    if key in ['w', 'W']:
+        if placement_mode:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+            
+    step = 1.0
+    if key == 'ArrowLeft':
+        return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowRight':
+        return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowUp':
+        return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    elif key == 'ArrowDown':
+        return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+    if key in ['+', '=', '-']:
+        if not active_id:
+            raise dash.exceptions.PreventUpdate
+            
+        direction = 1 if key in ['+', '='] else -1
+        # Determine step size based on slider
+        slider_step = 0.1 if active_id in ['grid-opacity-slider', 'rotation-slider'] else 1.0
+        increment = slider_step * direction
+        
+        if active_id == 'grid-x-offset-slider':
+            return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-y-offset-slider':
+            return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'rotation-slider':
+            return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-spacing-slider':
+            return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update
+        elif active_id == 'grid-opacity-slider':
+            val = max(0.0, min(1.0, op_val + increment))
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
+            
     raise dash.exceptions.PreventUpdate
 
 
