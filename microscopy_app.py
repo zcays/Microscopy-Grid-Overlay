@@ -60,7 +60,7 @@ def _get_rotated_data(img, rotation):
             'ph': preview.size[1],
             'img': rotated
         }
-        if len(_rotation_cache) > 20:
+        if len(_rotation_cache) > 3:
             oldest = next(iter(_rotation_cache))
             del _rotation_cache[oldest]
     return _rotation_cache[cache_key]
