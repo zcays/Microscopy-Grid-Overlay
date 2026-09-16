@@ -1103,21 +1103,21 @@ def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point,
 
 # ── Load grid settings ────────────────────────────────────────────────
 @app.callback(
-    [Output('rotation-slider', 'value'),
-     Output('grid-spacing-slider', 'value'),
-     Output('grid-x-offset-slider', 'value'),
-     Output('grid-y-offset-slider', 'value'),
-     Output('center-point-store', 'data'),
-     Output('center-point-display', 'children'),
-     Output('grid-opacity-slider', 'value'),
-     Output('show-labels-check', 'value'),
-     Output('crop-top-slider', 'value'),
-     Output('crop-bottom-slider', 'value'),
-     Output('crop-left-slider', 'value'),
-     Output('crop-right-slider', 'value'),
-     Output('status-text', 'children')],
+    [Output('rotation-slider', 'value', allow_duplicate=True),
+     Output('grid-spacing-slider', 'value', allow_duplicate=True),
+     Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('center-point-store', 'data', allow_duplicate=True),
+     Output('center-point-display', 'children', allow_duplicate=True),
+     Output('grid-opacity-slider', 'value', allow_duplicate=True),
+     Output('show-labels-check', 'value', allow_duplicate=True),
+     Output('crop-top-slider', 'value', allow_duplicate=True),
+     Output('crop-bottom-slider', 'value', allow_duplicate=True),
+     Output('crop-left-slider', 'value', allow_duplicate=True),
+     Output('crop-right-slider', 'value', allow_duplicate=True),
+     Output('status-text', 'children', allow_duplicate=True)],
     Input('upload-settings', 'contents'),
-    prevent_initial_call=True
+    prevent_initial_call='initial_duplicate'
 )
 def load_settings(contents):
     if contents is None:
