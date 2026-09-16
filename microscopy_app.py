@@ -154,13 +154,31 @@ app.layout = html.Div([
         ], style={'marginBottom': '15px'}),
 
         html.Div([
-            html.Label("Grid Spacing (px)", style=_label_style),
+            dcc.Checklist(
+                id='link-spacing-check',
+                options=[{'label': ' Link X and Y Spacing', 'value': 'link'}],
+                value=['link'],
+                style={'color': '#bbbbbb', 'fontFamily': 'sans-serif', 'fontSize': '0.9em', 'marginBottom': '10px'}
+            )
+        ]),
+
+        html.Div([
+            html.Label("Grid X Spacing (px)", style=_label_style),
             dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.001, value=229,
                        updatemode='drag',
                        marks={i: {'label': str(i), 'style': {'color': '#777'}}
                               for i in range(500, 2001, 500)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px'}),
+
+        html.Div(id='grid-y-spacing-container', children=[
+            html.Label("Grid Y Spacing (px)", style=_label_style),
+            dcc.Slider(id='grid-y-spacing-slider', min=10, max=2000, step=0.001, value=229,
+                       updatemode='drag',
+                       marks={i: {'label': str(i), 'style': {'color': '#777'}}
+                              for i in range(500, 2001, 500)},
+                       tooltip={"placement": "bottom", "always_visible": True})
+        ], style={'marginBottom': '15px', 'display': 'none'}),
 
         html.Div([
             html.Label("Grid X Offset (px)", style=_label_style),
@@ -454,7 +472,7 @@ def update_image_and_crop(upload_contents, rotation, btn_crop, btn_reset, c_top,
 # ── Clientside callback: figure with grid + well labels + fluorescence + crop walls ──
 app.clientside_callback(
     """
-    function(imgData, centerPoint, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, cropTop, cropBottom, cropLeft, cropRight, relayoutData) {
+    function(imgData, centerPoint, gridSpacingX, gridSpacingY, linkSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, cropTop, cropBottom, cropLeft, cropRight, relayoutData) {
         if (!imgData) {
             return window.dash_clientside.no_update;
         }
@@ -474,7 +492,9 @@ app.clientside_callback(
         var dy = imgH / previewH;
         
         var gridColor = 'rgba(0, 255, 255, ' + gridOpacity + ')';
-        var spacing = Math.max(gridSpacing, 1);
+        var isLinked = (linkSpacing || []).includes('link');
+        var spacingX = Math.max(gridSpacingX, 1);
+        var spacingY = isLinked ? spacingX : Math.max(gridSpacingY, 1);
         var doLabels = showLabels && showLabels.indexOf('show') !== -1;
         var doFluor = showFluor && showFluor.indexOf('show') !== -1 && flourData && flourData.values;
 
@@ -500,9 +520,9 @@ app.clientside_callback(
         }
 
         // Compute grid line positions
-        var startX = ((trueOffsetX % spacing) + spacing) % spacing;
+        var startX = ((trueOffsetX % spacingX) + spacingX) % spacingX;
         var xPositions = [];
-        for (var x = startX; x < imgW; x += spacing) {
+        for (var x = startX; x < imgW; x += spacingX) {
             xPositions.push(x);
             shapes.push({
                 type: 'line', x0: x, x1: x, y0: 0, y1: imgH,
@@ -511,9 +531,9 @@ app.clientside_callback(
             });
         }
 
-        var startY = ((trueOffsetY % spacing) + spacing) % spacing;
+        var startY = ((trueOffsetY % spacingY) + spacingY) % spacingY;
         var yPositions = [];
-        for (var y = startY; y < imgH; y += spacing) {
+        for (var y = startY; y < imgH; y += spacingY) {
             yPositions.push(y);
             shapes.push({
                 type: 'line', x0: 0, x1: imgW, y0: y, y1: y,
@@ -571,7 +591,7 @@ app.clientside_callback(
                         var fx = (xPositions[fcol] + xPositions[fcol + 1]) / 2;
                         var fy = (yPositions[frow] + yPositions[frow + 1]) / 2;
                         var val = fVals[frow][fcol];
-                        var fontSize = Math.min(Math.max(spacing * 0.12, 8), 14);
+                        var fontSize = Math.min(Math.max(Math.min(spacingX, spacingY) * 0.12, 8), 14);
                         annotations.push({
                             x: fx, y: fy,
                             text: val.toFixed(1),
@@ -649,6 +669,8 @@ app.clientside_callback(
     [Input('image-store', 'data'),
      Input('center-point-store', 'data'),
      Input('grid-spacing-slider', 'value'),
+     Input('grid-y-spacing-slider', 'value'),
+     Input('link-spacing-check', 'value'),
      Input('grid-x-offset-slider', 'value'),
      Input('grid-y-offset-slider', 'value'),
      Input('grid-opacity-slider', 'value'),
@@ -661,6 +683,18 @@ app.clientside_callback(
      Input('crop-right-slider', 'value')],
     [State('image-graph', 'relayoutData')]
 )
+
+# ── Server callback: Toggle Y Spacing Visibility ───────────────────────
+@app.callback(
+    Output('grid-y-spacing-container', 'style'),
+    Input('link-spacing-check', 'value')
+)
+def toggle_y_spacing(link_val):
+    base_style = {'marginBottom': '15px'}
+    if 'link' in (link_val or []):
+        return {**base_style, 'display': 'none'}
+    return {**base_style, 'display': 'block'}
+
 
 # ── Clientside callback: Global Keypress Listener ──────────────────────
 app.clientside_callback(
@@ -1090,6 +1124,8 @@ def save_csv(n_clicks, fluor_data):
     Input('btn-save-settings', 'n_clicks'),
     [State('rotation-slider', 'value'),
      State('grid-spacing-slider', 'value'),
+     State('grid-y-spacing-slider', 'value'),
+     State('link-spacing-check', 'value'),
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('center-point-store', 'data'),
@@ -1102,10 +1138,12 @@ def save_csv(n_clicks, fluor_data):
      State('save-settings-filename', 'value')],
     prevent_initial_call=True
 )
-def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels, c_top, c_bot, c_left, c_right, filename):
+def save_settings(n_clicks, rotation, spacing_x, spacing_y, link_spacing, offset_x, offset_y, center_point, opacity, show_labels, c_top, c_bot, c_left, c_right, filename):
     settings = {
         'rotation': rotation,
-        'grid_spacing': spacing,
+        'grid_spacing': spacing_x,
+        'grid_y_spacing': spacing_y,
+        'link_spacing': link_spacing,
         'grid_x_offset': offset_x,
         'grid_y_offset': offset_y,
         'center_point': center_point or {'x': 0, 'y': 0},
@@ -1131,6 +1169,8 @@ def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point,
 @app.callback(
     [Output('rotation-slider', 'value', allow_duplicate=True),
      Output('grid-spacing-slider', 'value', allow_duplicate=True),
+     Output('grid-y-spacing-slider', 'value', allow_duplicate=True),
+     Output('link-spacing-check', 'value', allow_duplicate=True),
      Output('grid-x-offset-slider', 'value', allow_duplicate=True),
      Output('grid-y-offset-slider', 'value', allow_duplicate=True),
      Output('center-point-store', 'data', allow_duplicate=True),
@@ -1156,6 +1196,8 @@ def load_settings(contents):
         return (
             s.get('rotation', 0),
             s.get('grid_spacing', 229),
+            s.get('grid_y_spacing', 229),
+            s.get('link_spacing', ['link']),
             s.get('grid_x_offset', 0),
             s.get('grid_y_offset', 0),
             cp,
@@ -1173,6 +1215,7 @@ def load_settings(contents):
                dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, dash.no_update, dash.no_update, \
+               dash.no_update, dash.no_update, \
                f'❌ Error loading settings: {str(e)}'
 
 # ── Server callback: Place Center Point ─────────────────────────────────
@@ -1223,17 +1266,19 @@ def update_offsets_from_click(clickData, btn_clicks, placement_mode):
      Output('grid-spacing-slider', 'value', allow_duplicate=True),
      Output('grid-opacity-slider', 'value', allow_duplicate=True),
      Output('placement-mode', 'data', allow_duplicate=True),
-     Output('placement-status', 'children', allow_duplicate=True)],
+     Output('placement-status', 'children', allow_duplicate=True),
+     Output('grid-y-spacing-slider', 'value', allow_duplicate=True)],
     Input('keypress-store', 'data'),
     [State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('rotation-slider', 'value'),
      State('grid-spacing-slider', 'value'),
      State('grid-opacity-slider', 'value'),
-     State('placement-mode', 'data')],
+     State('placement-mode', 'data'),
+     State('grid-y-spacing-slider', 'value')],
     prevent_initial_call=True
 )
-def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placement_mode):
+def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placement_mode, y_space_val):
     if not key_data:
         raise dash.exceptions.PreventUpdate
         
@@ -1242,9 +1287,9 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
     
     if key in ['w', 'W']:
         if placement_mode:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, ''
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False, '', dash.no_update
         else:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...'
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, True, 'Select a point on the image...', dash.no_update
             
     if key.startswith('Arrow'):
         if active_id:
@@ -1254,32 +1299,34 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
             increment = slider_step * direction
             
             if active_id == 'grid-x-offset-slider':
-                return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             elif active_id == 'grid-y-offset-slider':
-                return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             elif active_id == 'rotation-slider':
-                return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             elif active_id == 'grid-spacing-slider':
-                return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update
+                return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif active_id == 'grid-y-spacing-slider':
+                return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, y_space_val + increment
             elif active_id == 'grid-opacity-slider':
                 val = max(0.0, min(1.0, op_val + increment))
-                return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
+                return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update, dash.no_update
         else:
             # If no slider is focused, arrow keys adjust the grid offset natively
             step = 1.0
             if key == 'ArrowLeft':
-                return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                return x_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             elif key == 'ArrowRight':
-                return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                return x_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             elif key == 'ArrowUp':
-                return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                return dash.no_update, y_val - step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             elif key == 'ArrowDown':
-                return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+                return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
                 
     elif key in ['+', '=', '-']:
         direction = 1 if key in ['+', '='] else -1
         increment = 0.1 * direction
-        return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
     raise dash.exceptions.PreventUpdate
 
