@@ -198,19 +198,19 @@ app.layout = html.Div([
         
         html.Div([
             html.Label("Top Wall", style=_label_style),
-            dcc.Slider(id='crop-top-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+            dcc.Slider(id='crop-top-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
         ], style={'marginBottom': '5px'}),
         html.Div([
             html.Label("Bottom Wall", style=_label_style),
-            dcc.Slider(id='crop-bottom-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+            dcc.Slider(id='crop-bottom-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
         ], style={'marginBottom': '5px'}),
         html.Div([
             html.Label("Left Wall", style=_label_style),
-            dcc.Slider(id='crop-left-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+            dcc.Slider(id='crop-left-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
         ], style={'marginBottom': '5px'}),
         html.Div([
             html.Label("Right Wall", style=_label_style),
-            dcc.Slider(id='crop-right-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+            dcc.Slider(id='crop-right-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
         ], style={'marginBottom': '10px'}),
         
         html.Button("✂️ Apply Crop", id='btn-apply-crop', n_clicks=0, style=_btn_style),
