@@ -188,6 +188,34 @@ app.layout = html.Div([
                               1: {'label': '1', 'style': {'color': '#777'}}},
                        tooltip={"placement": "bottom", "always_visible": False})
         ], style={'marginBottom': '15px'}),
+        
+        # ── Image Cropping ──────────────────────────────────────────
+        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
+        html.Label("Image Cropping (%)", style={
+            'color': '#ffffff', 'fontFamily': 'sans-serif',
+            'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
+        }),
+        
+        html.Div([
+            html.Label("Top Wall", style=_label_style),
+            dcc.Slider(id='crop-top-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+        ], style={'marginBottom': '5px'}),
+        html.Div([
+            html.Label("Bottom Wall", style=_label_style),
+            dcc.Slider(id='crop-bottom-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+        ], style={'marginBottom': '5px'}),
+        html.Div([
+            html.Label("Left Wall", style=_label_style),
+            dcc.Slider(id='crop-left-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+        ], style={'marginBottom': '5px'}),
+        html.Div([
+            html.Label("Right Wall", style=_label_style),
+            dcc.Slider(id='crop-right-slider', min=0, max=49, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
+        ], style={'marginBottom': '10px'}),
+        
+        html.Button("✂️ Apply Crop", id='btn-apply-crop', n_clicks=0, style=_btn_style),
+        html.Button("🔄 Reset Image", id='btn-reset-crop', n_clicks=0, style=_btn_style),
+
 
         html.Div([
             html.Label("Show Well Labels", style=_label_style),
@@ -335,37 +363,89 @@ app.layout = html.Div([
 ], style={'margin': '0', 'padding': '0', 'display': 'flex'})
 
 
-# ── Server callback: image rotation ───────────────────────────────────
+# ── Server callback: image processor (upload, rotate, crop, reset) ─────
 @app.callback(
-    Output('image-store', 'data'),
+    [Output('image-store', 'data'),
+     Output('crop-top-slider', 'value'),
+     Output('crop-bottom-slider', 'value'),
+     Output('crop-left-slider', 'value'),
+     Output('crop-right-slider', 'value'),
+     Output('grid-x-offset-slider', 'value', allow_duplicate=True),
+     Output('grid-y-offset-slider', 'value', allow_duplicate=True),
+     Output('center-point-store', 'data', allow_duplicate=True),
+     Output('center-point-display', 'children', allow_duplicate=True),
+     Output('status-text', 'children', allow_duplicate=True)],
     [Input('upload-image', 'contents'),
-     Input('rotation-slider', 'value')]
+     Input('rotation-slider', 'value'),
+     Input('btn-apply-crop', 'n_clicks'),
+     Input('btn-reset-crop', 'n_clicks')],
+    [State('crop-top-slider', 'value'),
+     State('crop-bottom-slider', 'value'),
+     State('crop-left-slider', 'value'),
+     State('crop-right-slider', 'value')],
+    prevent_initial_call='initial_duplicate'
 )
-def update_image_store(upload_contents, rotation):
-    global _uploaded_image
-    ctx = dash.callback_context
+def update_image_and_crop(upload_contents, rotation, btn_crop, btn_reset, c_top, c_bot, c_left, c_right):
+    global _raw_uploaded_image, _uploaded_image
     
-    # On initial page load/refresh, Dash triggers without a specific property
-    if not ctx.triggered or ctx.triggered[0]['prop_id'] == '.':
-        _uploaded_image = None
-        
-    elif ctx.triggered and ctx.triggered[0]['prop_id'] == 'upload-image.contents':
-        if upload_contents is not None:
+    ctx = dash.callback_context
+    trigger_id = ctx.triggered[0]['prop_id'] if ctx.triggered else '.'
+    
+    # Initialize / Upload
+    if trigger_id == '.' or trigger_id == 'upload-image.contents':
+        if trigger_id == 'upload-image.contents' and upload_contents is not None:
             try:
                 _, content_string = upload_contents.split(',')
                 decoded = base64.b64decode(content_string)
-                _uploaded_image = ImageOps.exif_transpose(Image.open(BytesIO(decoded))).convert('RGB')
+                img = ImageOps.exif_transpose(Image.open(BytesIO(decoded))).convert('RGB')
+                _raw_uploaded_image = img
+                _uploaded_image = img.copy()
             except Exception:
                 pass
+        else:
+            _raw_uploaded_image = None
+            _uploaded_image = None
+            
+    # Reset
+    elif trigger_id == 'btn-reset-crop.n_clicks':
+        if _raw_uploaded_image is not None:
+            _uploaded_image = _raw_uploaded_image.copy()
+        else:
+            _uploaded_image = None # This will fall back to original_image
+            
+    # Crop
+    elif trigger_id == 'btn-apply-crop.n_clicks':
+        current = _uploaded_image if _uploaded_image is not None else original_image
+        w, h = current.size
+        # Calculate pixel boundaries based on percentages
+        left = int(w * (c_left / 100.0))
+        top = int(h * (c_top / 100.0))
+        right = int(w * (1 - c_right / 100.0))
+        bottom = int(h * (1 - c_bot / 100.0))
+        
+        # Ensure valid crop box
+        if left < right and top < bottom:
+            if _uploaded_image is None:
+                _uploaded_image = original_image.crop((left, top, right, bottom))
+                _raw_uploaded_image = original_image.copy()
+            else:
+                _uploaded_image = _uploaded_image.crop((left, top, right, bottom))
+    
+    # Always generate rotated data
     current = _uploaded_image if _uploaded_image is not None else original_image
     data = _get_rotated_data(current, rotation)
-    return {'b64': data['b64'], 'w': data['w'], 'h': data['h'], 'pw': data['pw'], 'ph': data['ph']}
+    
+    if trigger_id in ['btn-apply-crop.n_clicks', 'btn-reset-crop.n_clicks']:
+        return {'b64': data['b64'], 'w': data['w'], 'h': data['h'], 'pw': data['pw'], 'ph': data['ph']}, 0, 0, 0, 0, 0, 0, {'x': 0.0, 'y': 0.0}, "Center Point: (0.0, 0.0)", "✅ Image updated!"
+    else:
+        return {'b64': data['b64'], 'w': data['w'], 'h': data['h'], 'pw': data['pw'], 'ph': data['ph']}, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 
-# ── Clientside callback: figure with grid + well labels + fluorescence ──
+
+# ── Clientside callback: figure with grid + well labels + fluorescence + crop walls ──
 app.clientside_callback(
     """
-    function(imgData, centerPoint, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, relayoutData) {
+    function(imgData, centerPoint, gridSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, cropTop, cropBottom, cropLeft, cropRight, relayoutData) {
         if (!imgData) {
             return window.dash_clientside.no_update;
         }
@@ -389,8 +469,26 @@ app.clientside_callback(
         var doLabels = showLabels && showLabels.indexOf('show') !== -1;
         var doFluor = showFluor && showFluor.indexOf('show') !== -1 && flourData && flourData.values;
 
-        // Build grid shapes
+        // Build grid shapes & crop walls
         var shapes = [];
+
+        var cropColor = 'rgba(0, 0, 0, 0.7)';
+        if (cropTop > 0) {
+            var th = imgH * (cropTop / 100);
+            shapes.push({type: 'rect', x0: 0, y0: 0, x1: imgW, y1: th, fillcolor: cropColor, line: {width: 0}});
+        }
+        if (cropBottom > 0) {
+            var bh = imgH * (cropBottom / 100);
+            shapes.push({type: 'rect', x0: 0, y0: imgH - bh, x1: imgW, y1: imgH, fillcolor: cropColor, line: {width: 0}});
+        }
+        if (cropLeft > 0) {
+            var lw = imgW * (cropLeft / 100);
+            shapes.push({type: 'rect', x0: 0, y0: 0, x1: lw, y1: imgH, fillcolor: cropColor, line: {width: 0}});
+        }
+        if (cropRight > 0) {
+            var rw = imgW * (cropRight / 100);
+            shapes.push({type: 'rect', x0: imgW - rw, y0: 0, x1: imgW, y1: imgH, fillcolor: cropColor, line: {width: 0}});
+        }
 
         // Compute grid line positions
         var startX = ((trueOffsetX % spacing) + spacing) % spacing;
@@ -547,7 +645,11 @@ app.clientside_callback(
      Input('grid-opacity-slider', 'value'),
      Input('show-labels-check', 'value'),
      Input('fluor-store', 'data'),
-     Input('show-fluor-check', 'value')],
+     Input('show-fluor-check', 'value'),
+     Input('crop-top-slider', 'value'),
+     Input('crop-bottom-slider', 'value'),
+     Input('crop-left-slider', 'value'),
+     Input('crop-right-slider', 'value')],
     [State('image-graph', 'relayoutData')]
 )
 
