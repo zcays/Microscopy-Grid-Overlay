@@ -1277,24 +1277,9 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
                 return dash.no_update, y_val + step, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
                 
     elif key in ['+', '=', '-']:
-        if not active_id:
-            raise dash.exceptions.PreventUpdate
-            
         direction = 1 if key in ['+', '='] else -1
-        slider_step = 0.1 if active_id in ['grid-opacity-slider', 'rotation-slider'] else 1.0
-        increment = slider_step * direction
-        
-        if active_id == 'grid-x-offset-slider':
-            return x_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        elif active_id == 'grid-y-offset-slider':
-            return dash.no_update, y_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        elif active_id == 'rotation-slider':
-            return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        elif active_id == 'grid-spacing-slider':
-            return dash.no_update, dash.no_update, dash.no_update, space_val + increment, dash.no_update, dash.no_update, dash.no_update
-        elif active_id == 'grid-opacity-slider':
-            val = max(0.0, min(1.0, op_val + increment))
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, val, dash.no_update, dash.no_update
+        increment = 0.1 * direction
+        return dash.no_update, dash.no_update, rot_val + increment, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
     raise dash.exceptions.PreventUpdate
 
