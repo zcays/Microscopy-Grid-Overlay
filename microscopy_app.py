@@ -1077,10 +1077,14 @@ def save_csv(n_clicks, fluor_data):
      State('grid-y-offset-slider', 'value'),
      State('center-point-store', 'data'),
      State('grid-opacity-slider', 'value'),
-     State('show-labels-check', 'value')],
+     State('show-labels-check', 'value'),
+     State('crop-top-slider', 'value'),
+     State('crop-bottom-slider', 'value'),
+     State('crop-left-slider', 'value'),
+     State('crop-right-slider', 'value')],
     prevent_initial_call=True
 )
-def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels):
+def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels, c_top, c_bot, c_left, c_right):
     settings = {
         'rotation': rotation,
         'grid_spacing': spacing,
@@ -1088,7 +1092,11 @@ def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point,
         'grid_y_offset': offset_y,
         'center_point': center_point or {'x': 0, 'y': 0},
         'grid_opacity': opacity,
-        'show_labels': show_labels
+        'show_labels': show_labels,
+        'crop_top': c_top,
+        'crop_bottom': c_bot,
+        'crop_left': c_left,
+        'crop_right': c_right
     }
     return dcc.send_string(json.dumps(settings, indent=2), 'grid_settings.json')
 
@@ -1103,6 +1111,10 @@ def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point,
      Output('center-point-display', 'children'),
      Output('grid-opacity-slider', 'value'),
      Output('show-labels-check', 'value'),
+     Output('crop-top-slider', 'value'),
+     Output('crop-bottom-slider', 'value'),
+     Output('crop-left-slider', 'value'),
+     Output('crop-right-slider', 'value'),
      Output('status-text', 'children')],
     Input('upload-settings', 'contents'),
     prevent_initial_call=True
@@ -1124,6 +1136,10 @@ def load_settings(contents):
             f"Center Point: ({cp.get('x', 0)}, {cp.get('y', 0)})",
             s.get('grid_opacity', 0.7),
             s.get('show_labels', ['show']),
+            s.get('crop_top', 0),
+            s.get('crop_bottom', 0),
+            s.get('crop_left', 0),
+            s.get('crop_right', 0),
             '✅ Settings loaded successfully'
         )
     except Exception as e:
