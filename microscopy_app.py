@@ -1172,6 +1172,7 @@ def load_settings(contents):
         return dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, dash.no_update, \
                dash.no_update, dash.no_update, \
+               dash.no_update, dash.no_update, dash.no_update, dash.no_update, \
                f'❌ Error loading settings: {str(e)}'
 
 # ── Server callback: Place Center Point ─────────────────────────────────
