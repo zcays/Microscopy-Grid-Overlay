@@ -687,6 +687,14 @@ app.clientside_callback(
                     window.dash_clientside.set_props('keypress-store', {data: {key: key, ts: Date.now(), active_id: activeId}});
                 }
             }, true);
+            
+            document.addEventListener('mousedown', function(e) {
+                if (e.target && e.target.closest('#image-graph')) {
+                    if (document.activeElement && document.activeElement !== document.body) {
+                        document.activeElement.blur();
+                    }
+                }
+            }, true);
         }
         return window.dash_clientside.no_update;
     }
