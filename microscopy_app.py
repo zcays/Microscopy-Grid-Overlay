@@ -312,6 +312,15 @@ app.layout = html.Div([
 
         html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
 
+        html.Div([
+            html.Label("Settings Filename", style=_label_style),
+            dcc.Input(
+                id='save-settings-filename',
+                type='text',
+                placeholder='grid_settings.json',
+                style={'width': '100%', 'backgroundColor': '#333', 'color': '#fff', 'border': '1px solid #444', 'padding': '5px', 'marginBottom': '8px', 'boxSizing': 'border-box'}
+            )
+        ]),
         html.Button("⬇️  Save Grid Settings", id='btn-save-settings', n_clicks=0, style=_btn_style),
         dcc.Upload(
             id='upload-settings',
@@ -1081,10 +1090,11 @@ def save_csv(n_clicks, fluor_data):
      State('crop-top-slider', 'value'),
      State('crop-bottom-slider', 'value'),
      State('crop-left-slider', 'value'),
-     State('crop-right-slider', 'value')],
+     State('crop-right-slider', 'value'),
+     State('save-settings-filename', 'value')],
     prevent_initial_call=True
 )
-def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels, c_top, c_bot, c_left, c_right):
+def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point, opacity, show_labels, c_top, c_bot, c_left, c_right, filename):
     settings = {
         'rotation': rotation,
         'grid_spacing': spacing,
@@ -1098,7 +1108,15 @@ def save_settings(n_clicks, rotation, spacing, offset_x, offset_y, center_point,
         'crop_left': c_left,
         'crop_right': c_right
     }
-    return dcc.send_string(json.dumps(settings, indent=2), 'grid_settings.json')
+    
+    if not filename or not filename.strip():
+        filename = 'grid_settings.json'
+    else:
+        filename = filename.strip()
+        if not filename.endswith('.json'):
+            filename += '.json'
+            
+    return dcc.send_string(json.dumps(settings, indent=2), filename)
 
 
 # ── Load grid settings ────────────────────────────────────────────────
