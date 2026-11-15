@@ -1,28 +1,28 @@
+"""SurveyApps runtime copy of the pinned Microscopy Grid Overlay source.
+Owns the existing Dash UI and scientific callbacks. Local changes are documented
+in docs/UPSTREAM_CHANGES.md; the exact original remains in vendor/microscopy/.
+"""
 import dash
 from dash import dcc, html, Input, Output, State, callback_context
 import plotly.graph_objects as go
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-Image.MAX_IMAGE_PIXELS = None
+Image.MAX_IMAGE_PIXELS = 100_000_000
+import warnings
+warnings.simplefilter("error", Image.DecompressionBombWarning)
 import numpy as np
-import requests
 from io import BytesIO
 import base64
 import json
 import string
 
-app = dash.Dash(__name__, title="Microscopy Grid Aligner")
+from pathlib import Path
+app = dash.Dash(__name__, title="SurveyApps! · Fluorescence Lab",
+                assets_folder=str(Path(__file__).parent / 'assets'),
+                serve_locally=True, update_title="Processing…")
 
-# ── Load sample image ──────────────────────────────────────────────────
-try:
-    url = "https://raw.githubusercontent.com/scikit-image/scikit-image/main/skimage/data/immunohistochemistry.png"
-    response = requests.get(url, timeout=5)
-    original_image = ImageOps.exif_transpose(Image.open(BytesIO(response.content))).convert('RGB')
-except Exception:
-    img_array = np.zeros((800, 800, 3), dtype=np.uint8)
-    for i in range(0, 800, 80):
-        img_array[i:i+40, :] = [50, 0, 100]
-        img_array[:, i:i+40] = [0, 100, 50]
-    original_image = Image.fromarray(img_array)
+# No synthetic data: analysis requires an uploaded image.
+original_image = None
+_raw_uploaded_image = None
 
 # ── Rotation cache ─────────────────────────────────────────────────────
 _rotation_cache = {}
@@ -83,14 +83,47 @@ def _row_label(idx):
     return label
 
 
+_font_cache = {}
+
+
+def _get_mono_font(font_size):
+    """Return a cached PIL monospace or fallback font for the requested size."""
+    font_size = int(font_size)
+    if font_size not in _font_cache:
+        font = None
+        for candidate in ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "Menlo.ttc", "Arial.ttf"):
+            try:
+                font = ImageFont.truetype(candidate, font_size)
+                break
+            except Exception:
+                continue
+        _font_cache[font_size] = font if font is not None else ImageFont.load_default()
+    return _font_cache[font_size]
+
+
 # ── Shared styles ──────────────────────────────────────────────────────
 _btn_style = {
-    'backgroundColor': '#333', 'color': '#ddd', 'border': '1px solid #555',
-    'borderRadius': '4px', 'padding': '8px 12px', 'cursor': 'pointer',
-    'fontFamily': 'sans-serif', 'fontSize': '0.85em', 'width': '100%',
-    'marginBottom': '6px'
+    'backgroundColor': 'var(--lg-control)', 'color': 'var(--lg-text)',
+    'border': '1px solid var(--lg-border)', 'borderRadius': '10px',
+    'padding': '7px 12px', 'cursor': 'pointer',
+    'fontFamily': 'inherit', 'fontSize': '12.5px', 'fontWeight': '500',
+    'width': '100%', 'marginBottom': '6px'
 }
-_label_style = {'color': '#bbbbbb', 'fontFamily': 'sans-serif', 'fontSize': '0.9em', 'marginBottom': '4px'}
+_label_style = {
+    'color': 'var(--lg-secondary)', 'fontFamily': 'inherit',
+    'fontSize': '12px', 'fontWeight': '500', 'marginBottom': '5px',
+    'display': 'block'
+}
+_section_title_style = {
+    'color': 'var(--lg-text)', 'fontFamily': 'inherit',
+    'fontSize': '12.5px', 'fontWeight': '600', 'letterSpacing': '-0.01em',
+    'marginBottom': '8px', 'display': 'block'
+}
+_hr_style = {
+    'border': 'none', 'borderTop': '1px solid var(--lg-border)',
+    'margin': '14px 0 12px'
+}
+_mark_style = {'color': 'rgba(255, 255, 255, 0.42)', 'fontSize': '10.5px'}
 
 # ── Layout ─────────────────────────────────────────────────────────────
 app.layout = html.Div([
@@ -105,9 +138,11 @@ app.layout = html.Div([
 
     # Left Control Panel
     html.Div([
-        html.H2("Microscopy Aligner", style={
-            'color': '#ffffff', 'margin': '0 0 15px 0',
-            'fontFamily': 'sans-serif', 'fontSize': '1.4em'
+        html.Div('RGB channel intensity • 8-bit (0–255). Upload your own image; Upload an image to begin. Recompute after alignment changes.', className='survey-note'),
+        html.H2("Fluorescence Lab", className='lab-heading', style={
+            'color': 'var(--lg-text)', 'margin': '0 0 12px 0',
+            'fontFamily': 'inherit', 'fontSize': '17px', 'fontWeight': '600',
+            'letterSpacing': '-0.02em'
         }),
 
         # ── Upload ─────────────────────────────────────────────────
@@ -117,15 +152,17 @@ app.layout = html.Div([
                 children=html.Div([
                     'Drag & Drop or ',
                     html.A('Select Image', style={
-                        'color': '#00aaff', 'textDecoration': 'underline'
+                        'color': 'var(--lg-accent)', 'fontWeight': '600', 'textDecoration': 'none'
                     })
                 ]),
                 style={
-                    'width': '100%', 'height': '50px', 'lineHeight': '50px',
+                    'width': '100%', 'height': '46px', 'lineHeight': '44px',
                     'borderWidth': '1px', 'borderStyle': 'dashed',
-                    'borderRadius': '5px', 'textAlign': 'center',
-                    'marginBottom': '15px', 'color': '#bbbbbb',
-                    'borderColor': '#777', 'cursor': 'pointer', 'fontSize': '0.85em'
+                    'borderRadius': '12px', 'textAlign': 'center',
+                    'marginBottom': '12px', 'color': 'var(--lg-secondary)',
+                    'borderColor': 'rgba(255, 255, 255, 0.20)',
+                    'backgroundColor': 'var(--lg-field)',
+                    'cursor': 'pointer', 'fontSize': '12.5px'
                 },
                 multiple=False,
                 accept='image/*,.tif,.tiff,.jpg,.jpeg,.png'
@@ -139,8 +176,19 @@ app.layout = html.Div([
             dcc.Store(id='keypress-store'),
             html.Div(id='dummy-listener'),
             html.Button("🎯 Place Center Point (W)", id='btn-place-center', n_clicks=0, style=_btn_style),
-            html.Div(id='center-point-display', children='Center Point: (0.0, 0.0)', style={'color': '#00ffff', 'fontFamily': 'monospace', 'fontSize': '0.9em', 'marginBottom': '5px', 'textAlign': 'center'}),
-            html.Div(id='placement-status', style={'color': '#ffaa00', 'fontFamily': 'sans-serif', 'fontSize': '0.85em', 'marginBottom': '15px', 'textAlign': 'center', 'fontWeight': 'bold'})
+            html.Div(id='center-point-display', children='Center Point: (0.0, 0.0)', style={
+                'color': 'var(--lg-text)', 'fontFamily': 'var(--font-mono)',
+                'fontVariantNumeric': 'tabular-nums', 'fontSize': '11.5px',
+                'padding': '6px 10px', 'borderRadius': '9px',
+                'backgroundColor': 'var(--lg-field)',
+                'border': '1px solid var(--lg-border)',
+                'marginBottom': '6px', 'textAlign': 'center'
+            }),
+            html.Div(id='placement-status', style={
+                'color': 'var(--lg-orange)', 'fontFamily': 'inherit',
+                'fontSize': '12px', 'marginBottom': '12px',
+                'textAlign': 'center', 'fontWeight': '600'
+            })
         ]),
 
         # ── Sliders ────────────────────────────────────────────────
@@ -148,17 +196,17 @@ app.layout = html.Div([
             html.Label("Image Rotation (°)", style=_label_style),
             dcc.Slider(id='rotation-slider', min=-180, max=180, step=0.01, value=0,
                        updatemode='mouseup',
-                       marks={i: {'label': str(i), 'style': {'color': '#777'}}
+                       marks={i: {'label': str(i), 'style': _mark_style}
                               for i in range(-180, 181, 90)},
                        tooltip={"placement": "bottom", "always_visible": True})
-        ], style={'marginBottom': '15px'}),
+        ], style={'marginBottom': '14px'}),
 
         html.Div([
             dcc.Checklist(
                 id='link-spacing-check',
                 options=[{'label': ' Link X and Y Spacing', 'value': 'link'}],
                 value=['link'],
-                style={'color': '#bbbbbb', 'fontFamily': 'sans-serif', 'fontSize': '0.9em', 'marginBottom': '10px'}
+                style={'color': 'var(--lg-secondary)', 'fontFamily': 'inherit', 'fontSize': '12.5px', 'marginBottom': '10px'}
             )
         ]),
 
@@ -166,16 +214,16 @@ app.layout = html.Div([
             html.Label("Grid X Spacing (px)", style=_label_style),
             dcc.Slider(id='grid-spacing-slider', min=10, max=2000, step=0.001, value=229,
                        updatemode='drag',
-                       marks={i: {'label': str(i), 'style': {'color': '#777'}}
+                       marks={i: {'label': str(i), 'style': _mark_style}
                               for i in range(500, 2001, 500)},
                        tooltip={"placement": "bottom", "always_visible": True})
-        ], style={'marginBottom': '15px'}),
+        ], style={'marginBottom': '14px'}),
 
         html.Div(id='grid-y-spacing-container', children=[
             html.Label("Grid Y Spacing (px)", style=_label_style),
             dcc.Slider(id='grid-y-spacing-slider', min=10, max=2000, step=0.001, value=229,
                        updatemode='drag',
-                       marks={i: {'label': str(i), 'style': {'color': '#777'}}
+                       marks={i: {'label': str(i), 'style': _mark_style}
                               for i in range(500, 2001, 500)},
                        tooltip={"placement": "bottom", "always_visible": True})
         ], style={'marginBottom': '15px', 'display': 'none'}),
@@ -184,48 +232,45 @@ app.layout = html.Div([
             html.Label("Grid X Offset (px)", style=_label_style),
             dcc.Slider(id='grid-x-offset-slider', min=-2000, max=2000, step=0.01, value=0,
                        updatemode='drag',
-                       marks={i: {'label': str(i), 'style': {'color': '#777'}}
+                       marks={i: {'label': str(i), 'style': _mark_style}
                               for i in range(-2000, 2001, 1000)},
                        tooltip={"placement": "bottom", "always_visible": True})
-        ], style={'marginBottom': '15px'}),
+        ], style={'marginBottom': '14px'}),
 
         html.Div([
             html.Label("Grid Y Offset (px)", style=_label_style),
             dcc.Slider(id='grid-y-offset-slider', min=-2000, max=2000, step=0.01, value=0,
                        updatemode='drag',
-                       marks={i: {'label': str(i), 'style': {'color': '#777'}}
+                       marks={i: {'label': str(i), 'style': _mark_style}
                               for i in range(-2000, 2001, 1000)},
                        tooltip={"placement": "bottom", "always_visible": True})
-        ], style={'marginBottom': '15px'}),
+        ], style={'marginBottom': '14px'}),
 
         html.Div([
             html.Label("Grid Opacity", style=_label_style),
             dcc.Slider(id='grid-opacity-slider', min=0, max=1, step=0.1, value=0.7,
                        updatemode='drag',
-                       marks={0: {'label': '0', 'style': {'color': '#777'}},
-                              1: {'label': '1', 'style': {'color': '#777'}}},
+                       marks={0: {'label': '0', 'style': _mark_style},
+                              1: {'label': '1', 'style': _mark_style}},
                        tooltip={"placement": "bottom", "always_visible": False})
-        ], style={'marginBottom': '15px'}),
+        ], style={'marginBottom': '14px'}),
         
         # ── Image Cropping ──────────────────────────────────────────
-        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
-        html.Label("Image Cropping (%)", style={
-            'color': '#ffffff', 'fontFamily': 'sans-serif',
-            'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
-        }),
+        html.Hr(style=_hr_style),
+        html.Label("Image Cropping (%)", style=_section_title_style),
         
         html.Div([
             html.Label("Top Wall", style=_label_style),
             dcc.Slider(id='crop-top-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
-        ], style={'marginBottom': '5px'}),
+        ], style={'marginBottom': '6px'}),
         html.Div([
             html.Label("Bottom Wall", style=_label_style),
             dcc.Slider(id='crop-bottom-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
-        ], style={'marginBottom': '5px'}),
+        ], style={'marginBottom': '6px'}),
         html.Div([
             html.Label("Left Wall", style=_label_style),
             dcc.Slider(id='crop-left-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
-        ], style={'marginBottom': '5px'}),
+        ], style={'marginBottom': '6px'}),
         html.Div([
             html.Label("Right Wall", style=_label_style),
             dcc.Slider(id='crop-right-slider', min=0, max=99, step=0.1, value=0, updatemode='drag', tooltip={"placement": "bottom", "always_visible": False})
@@ -241,17 +286,14 @@ app.layout = html.Div([
                 id='show-labels-check',
                 options=[{'label': ' Show A1, A2, B1... labels', 'value': 'show'}],
                 value=['show'],
-                labelStyle={'color': '#bbbbbb', 'display': 'inline-block', 'marginLeft': '5px'},
-                style={'color': '#bbbbbb', 'fontFamily': 'sans-serif', 'marginTop': '3px'}
+                labelStyle={'color': 'var(--lg-secondary)', 'display': 'inline-block', 'marginLeft': '5px'},
+                style={'color': 'var(--lg-secondary)', 'fontFamily': 'inherit', 'marginTop': '3px'}
             )
-        ], style={'marginBottom': '15px'}),
+        ], style={'marginBottom': '14px'}),
 
         # ── Fluorescence ───────────────────────────────────────────
-        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
-        html.Label("Fluorescence Analysis", style={
-            'color': '#ffffff', 'fontFamily': 'sans-serif',
-            'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
-        }),
+        html.Hr(style=_hr_style),
+        html.Label("Fluorescence Analysis", style=_section_title_style),
 
         html.Div([
             html.Label("Channel", style=_label_style),
@@ -278,8 +320,8 @@ app.layout = html.Div([
                     {'label': 'Brightfield (luminance)', 'value': 'brightfield'},
                 ],
                 value='mean',
-                style={'backgroundColor': '#333', 'color': '#ddd', 'marginBottom': '8px'},
-                className='dark-dropdown'
+                style={'marginBottom': '8px'},
+                className='dark-dropdown lg-dropdown'
             ),
         ], style={'marginBottom': '8px'}),
 
@@ -290,19 +332,16 @@ app.layout = html.Div([
                 id='show-fluor-check',
                 options=[{'label': ' Show values on image', 'value': 'show'}],
                 value=['show'],
-                labelStyle={'color': '#bbbbbb', 'display': 'inline-block', 'marginLeft': '5px'},
-                style={'color': '#bbbbbb', 'fontFamily': 'sans-serif', 'marginTop': '3px'}
+                labelStyle={'color': 'var(--lg-secondary)', 'display': 'inline-block', 'marginLeft': '5px'},
+                style={'color': 'var(--lg-secondary)', 'fontFamily': 'inherit', 'marginTop': '3px'}
             )
         ], style={'marginBottom': '8px'}),
 
         html.Button("📊  Export Matrix CSV", id='btn-save-csv', n_clicks=0, style=_btn_style),
 
         # ── Crop Well ──────────────────────────────────────────────
-        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
-        html.Label("Crop Well", style={
-            'color': '#ffffff', 'fontFamily': 'sans-serif',
-            'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
-        }),
+        html.Hr(style=_hr_style),
+        html.Label("Crop Well", style=_section_title_style),
 
         html.Div([
             html.Label("Select Well", style=_label_style),
@@ -310,25 +349,22 @@ app.layout = html.Div([
                 id='crop-well-dropdown',
                 options=[],
                 placeholder='Select a well (e.g. A1)',
-                style={'backgroundColor': '#333', 'color': '#ddd', 'marginBottom': '8px'},
-                className='dark-dropdown'
+                style={'marginBottom': '8px'},
+                className='dark-dropdown lg-dropdown'
             ),
         ], style={'marginBottom': '8px'}),
 
         html.Button("✂️  Crop & Download Well", id='btn-crop-well', n_clicks=0, style=_btn_style),
 
         # ── Export & Settings ──────────────────────────────────────
-        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
-        html.Label("Export & Settings", style={
-            'color': '#ffffff', 'fontFamily': 'sans-serif',
-            'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
-        }),
+        html.Hr(style=_hr_style),
+        html.Label("Export & Settings", style=_section_title_style),
 
         html.Button("💾  Save Image Only", id='btn-save-image', n_clicks=0, style=_btn_style),
         html.Button("🔲  Save Grid Only", id='btn-save-grid', n_clicks=0, style=_btn_style),
         html.Button("📸  Save Merged (Image + Grid)", id='btn-save-merged', n_clicks=0, style=_btn_style),
 
-        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
+        html.Hr(style=_hr_style),
 
         html.Div([
             html.Label("Settings Filename", style=_label_style),
@@ -336,7 +372,13 @@ app.layout = html.Div([
                 id='save-settings-filename',
                 type='text',
                 placeholder='grid_settings.json',
-                style={'width': '100%', 'backgroundColor': '#333', 'color': '#fff', 'border': '1px solid #444', 'padding': '5px', 'marginBottom': '8px', 'boxSizing': 'border-box'}
+                className='lg-input',
+                style={
+                    'width': '100%', 'backgroundColor': 'var(--lg-field)',
+                    'color': 'var(--lg-text)', 'border': '1px solid var(--lg-border)',
+                    'borderRadius': '9px', 'padding': '7px 10px',
+                    'marginBottom': '8px', 'boxSizing': 'border-box'
+                }
             )
         ]),
         html.Button("⬇️  Save Grid Settings", id='btn-save-settings', n_clicks=0, style=_btn_style),
@@ -348,46 +390,41 @@ app.layout = html.Div([
         ),
 
         html.Div(id='status-text', style={
-            'color': '#4CAF50', 'fontFamily': 'sans-serif',
-            'fontSize': '0.85em', 'marginTop': '8px', 'minHeight': '20px'
+            'color': 'var(--lg-green)', 'fontFamily': 'inherit',
+            'fontSize': '12px', 'marginTop': '8px', 'minHeight': '20px'
         }),
 
         # ── Matrix Heatmap Container ────────────────────────────────
-        html.Hr(style={'borderColor': '#444', 'margin': '12px 0'}),
-        html.Label("Fluorescence Matrix Heatmap", style={
-            'color': '#ffffff', 'fontFamily': 'sans-serif',
-            'fontWeight': 'bold', 'marginBottom': '8px', 'display': 'block'
-        }),
+        html.Hr(style=_hr_style),
+        html.Label("Fluorescence Matrix Heatmap", style=_section_title_style),
         dcc.Graph(
             id='matrix-graph',
+            className='lg-matrix-graph',
             style={'height': '220px', 'width': '100%'},
             config={'displayModeBar': False}
         ),
 
-    ], style={
-        'width': '28%', 'height': '100vh', 'padding': '20px',
-        'boxSizing': 'border-box', 'display': 'inline-block',
-        'verticalAlign': 'top', 'backgroundColor': '#1e1e1e',
-        'borderRight': '1px solid #333', 'overflowY': 'auto'
+    ], className='survey-controls', style={
+        'width': '336px', 'height': 'calc(100vh - 16px)', 'padding': '16px',
+        'boxSizing': 'border-box', 'overflowY': 'auto'
     }),
 
     # Right Main Display Panel
     html.Div([
         dcc.Graph(
             id='image-graph',
-            style={'height': '100vh', 'width': '100%'},
+            style={'height': '100%', 'width': '100%'},
             config={
                 'scrollZoom': True,
                 'displayModeBar': True,
                 'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
             }
         )
-    ], style={
-        'width': '72%', 'height': '100vh',
-        'display': 'inline-block', 'verticalAlign': 'top',
-        'backgroundColor': '#000000'
+    ], id='image-graph-wrap', className='survey-image is-empty', style={
+        'flex': '1', 'minWidth': '0', 'height': 'calc(100vh - 16px)',
+        'backgroundColor': '#0a0c10'
     })
-], style={'margin': '0', 'padding': '0', 'display': 'flex'})
+], className='survey-lab-root', style={'margin': '0', 'padding': '8px', 'gap': '8px', 'display': 'flex', 'width': '100vw', 'height': '100vh', 'boxSizing': 'border-box'})
 
 
 # ── Server callback: image processor (upload, rotate, crop, reset) ─────
@@ -428,7 +465,7 @@ def update_image_and_crop(upload_contents, rotation, btn_crop, btn_reset, c_top,
                 _raw_uploaded_image = img
                 _uploaded_image = img.copy()
             except Exception:
-                pass
+                return tuple([dash.no_update] * 9 + ['Could not read this image. Choose a valid TIFF, PNG or JPEG (up to 100 million pixels).'])
         else:
             _raw_uploaded_image = None
             _uploaded_image = None
@@ -438,11 +475,13 @@ def update_image_and_crop(upload_contents, rotation, btn_crop, btn_reset, c_top,
         if _raw_uploaded_image is not None:
             _uploaded_image = _raw_uploaded_image.copy()
         else:
-            _uploaded_image = None # This will fall back to original_image
+            _uploaded_image = None
             
     # Crop
     elif trigger_id == 'btn-apply-crop.n_clicks':
-        current = _uploaded_image if _uploaded_image is not None else original_image
+        if _uploaded_image is None:
+            return tuple([None] + [dash.no_update] * 8 + ['Upload an image to begin.'])
+        current = _uploaded_image
         w, h = current.size
         # Calculate pixel boundaries based on percentages
         left = int(w * (c_left / 100.0))
@@ -452,14 +491,16 @@ def update_image_and_crop(upload_contents, rotation, btn_crop, btn_reset, c_top,
         
         # Ensure valid crop box
         if left < right and top < bottom:
-            if _uploaded_image is None:
-                _uploaded_image = original_image.crop((left, top, right, bottom))
-                _raw_uploaded_image = original_image.copy()
-            else:
-                _uploaded_image = _uploaded_image.crop((left, top, right, bottom))
+            _uploaded_image = _uploaded_image.crop((left, top, right, bottom))
     
+    # A crop/upload changes pixel content; old previews must not survive id reuse.
+    if trigger_id != 'rotation-slider.value':
+        _rotation_cache.clear()
+
     # Always generate rotated data
     current = _uploaded_image if _uploaded_image is not None else original_image
+    if current is None:
+        return tuple([None] + [dash.no_update] * 8 + ['Upload an image to begin.'])
     data = _get_rotated_data(current, rotation)
     
     if trigger_id in ['btn-apply-crop.n_clicks', 'btn-reset-crop.n_clicks']:
@@ -474,7 +515,10 @@ app.clientside_callback(
     """
     function(imgData, centerPoint, gridSpacingX, gridSpacingY, linkSpacing, offsetX, offsetY, gridOpacity, showLabels, flourData, showFluor, cropTop, cropBottom, cropLeft, cropRight, relayoutData) {
         if (!imgData) {
-            return window.dash_clientside.no_update;
+            return [
+                {data: [], layout: {paper_bgcolor: '#181818', plot_bgcolor: '#181818', xaxis: {visible: false}, yaxis: {visible: false}, annotations: [{text: 'Upload image to begin', showarrow: false, x: 0.5, y: 0.5, xref: 'paper', yref: 'paper', font: {color: '#cccccc', size: 18}}]}},
+                'survey-image is-empty'
+            ];
         }
 
         var cx = centerPoint ? centerPoint.x : 0;
@@ -519,24 +563,26 @@ app.clientside_callback(
             shapes.push({type: 'rect', x0: imgW - rw, y0: 0, x1: imgW, y1: imgH, fillcolor: cropColor, line: {width: 0}});
         }
 
-        // Compute grid line positions
+        // Compute grid line positions & combine into one SVG path to avoid hundreds of separate DOM shape nodes
         var startX = ((trueOffsetX % spacingX) + spacingX) % spacingX;
         var xPositions = [];
+        var pathParts = [];
         for (var x = startX; x < imgW; x += spacingX) {
             xPositions.push(x);
-            shapes.push({
-                type: 'line', x0: x, x1: x, y0: 0, y1: imgH,
-                line: {color: gridColor, width: 1.5},
-                editable: false
-            });
+            pathParts.push('M' + x + ',0L' + x + ',' + imgH);
         }
 
         var startY = ((trueOffsetY % spacingY) + spacingY) % spacingY;
         var yPositions = [];
         for (var y = startY; y < imgH; y += spacingY) {
             yPositions.push(y);
+            pathParts.push('M0,' + y + 'L' + imgW + ',' + y);
+        }
+
+        if (pathParts.length > 0 && gridOpacity > 0) {
             shapes.push({
-                type: 'line', x0: 0, x1: imgW, y0: y, y1: y,
+                type: 'path',
+                path: pathParts.join(''),
                 line: {color: gridColor, width: 1.5},
                 editable: false
             });
@@ -585,24 +631,24 @@ app.clientside_callback(
             var fVals = flourData.values;
             var fRows = flourData.n_rows;
             var fCols = flourData.n_cols;
-            for (var frow = 0; frow < fRows; frow++) {
-                for (var fcol = 0; fcol < fCols; fcol++) {
-                    if (frow < yPositions.length - 1 && fcol < xPositions.length - 1) {
-                        var fx = (xPositions[fcol] + xPositions[fcol + 1]) / 2;
-                        var fy = (yPositions[frow] + yPositions[frow + 1]) / 2;
-                        var val = fVals[frow][fcol];
-                        var fontSize = Math.min(Math.max(Math.min(spacingX, spacingY) * 0.12, 8), 14);
-                        annotations.push({
-                            x: fx, y: fy,
-                            text: val.toFixed(1),
-                            showarrow: false,
-                            font: {color: '#ffff00', size: fontSize, family: 'monospace'},
-                            xref: 'x', yref: 'y',
-                            opacity: 0.9,
-                            bgcolor: 'rgba(0,0,0,0.5)',
-                            borderpad: 2
-                        });
-                    }
+            var fontSize = Math.min(Math.max(Math.min(spacingX, spacingY) * 0.12, 8), 14);
+            var maxRow = Math.min(fRows, yPositions.length - 1);
+            var maxCol = Math.min(fCols, xPositions.length - 1);
+            for (var frow = 0; frow < maxRow; frow++) {
+                var fy = (yPositions[frow] + yPositions[frow + 1]) / 2;
+                var rowArr = fVals[frow];
+                for (var fcol = 0; fcol < maxCol; fcol++) {
+                    var fx = (xPositions[fcol] + xPositions[fcol + 1]) / 2;
+                    annotations.push({
+                        x: fx, y: fy,
+                        text: rowArr[fcol].toFixed(1),
+                        showarrow: false,
+                        font: {color: '#ffff00', size: fontSize, family: 'monospace'},
+                        xref: 'x', yref: 'y',
+                        opacity: 0.9,
+                        bgcolor: 'rgba(0,0,0,0.5)',
+                        borderpad: 2
+                    });
                 }
             }
         }
@@ -620,52 +666,56 @@ app.clientside_callback(
         var leftMargin = doLabels ? 35 : 0;
         var topMargin = doLabels ? 25 : 0;
 
-        return {
-            data: [{
-                type: 'image',
-                source: b64,
-                x0: dx / 2,
-                y0: dy / 2,
-                dx: dx,
-                dy: dy,
-                hoverinfo: 'none'
-            }],
-            layout: {
-                shapes: shapes,
-                annotations: annotations,
-                xaxis: {
-                    range: xRange,
-                    showgrid: false, zeroline: false,
-                    title: '',
-                    scaleanchor: 'y',
-                    side: 'top',
-                    showticklabels: doLabels,
-                    tickvals: xTickVals,
-                    ticktext: xTickText,
-                    tickfont: {color: 'rgba(0,255,255,0.85)', size: 12, family: 'monospace'},
-                    ticks: ''
-                },
-                yaxis: {
-                    range: yRange,
-                    showgrid: false, zeroline: false,
-                    title: '',
-                    side: 'left',
-                    showticklabels: doLabels,
-                    tickvals: yTickVals,
-                    ticktext: yTickText,
-                    tickfont: {color: 'rgba(0,255,255,0.85)', size: 12, family: 'monospace'},
-                    ticks: ''
-                },
-                margin: {l: leftMargin, r: 0, t: topMargin, b: 0},
-                plot_bgcolor: '#000000',
-                paper_bgcolor: '#000000',
-                uirevision: 'constant',
-                dragmode: 'pan'
-            }
-        };
+        return [
+            {
+                data: [{
+                    type: 'image',
+                    source: b64,
+                    x0: dx / 2,
+                    y0: dy / 2,
+                    dx: dx,
+                    dy: dy,
+                    hoverinfo: 'none'
+                }],
+                layout: {
+                    shapes: shapes,
+                    annotations: annotations,
+                    xaxis: {
+                        range: xRange,
+                        showgrid: false, zeroline: false,
+                        title: '',
+                        scaleanchor: 'y',
+                        side: 'top',
+                        showticklabels: doLabels,
+                        tickvals: xTickVals,
+                        ticktext: xTickText,
+                        tickfont: {color: 'rgba(0,255,255,0.85)', size: 12, family: 'monospace'},
+                        ticks: ''
+                    },
+                    yaxis: {
+                        range: yRange,
+                        showgrid: false, zeroline: false,
+                        title: '',
+                        side: 'left',
+                        showticklabels: doLabels,
+                        tickvals: yTickVals,
+                        ticktext: yTickText,
+                        tickfont: {color: 'rgba(0,255,255,0.85)', size: 12, family: 'monospace'},
+                        ticks: ''
+                    },
+                    margin: {l: leftMargin, r: 0, t: topMargin, b: 0},
+                    plot_bgcolor: '#000000',
+                    paper_bgcolor: '#000000',
+                    uirevision: 'constant',
+                    dragmode: 'pan'
+                }
+            },
+            'survey-image'
+        ];
     }
     """,
-    Output('image-graph', 'figure'),
+    [Output('image-graph', 'figure'),
+     Output('image-graph-wrap', 'className')],
     [Input('image-store', 'data'),
      Input('center-point-store', 'data'),
      Input('grid-spacing-slider', 'value'),
@@ -696,7 +746,7 @@ def toggle_y_spacing(link_val):
     return {**base_style, 'display': 'block'}
 
 
-# ── Clientside callback: Global Keypress Listener ──────────────────────
+# ── Clientside callback: Global Keypress & Empty-Canvas Upload Listener ──
 app.clientside_callback(
     """
     function(id) {
@@ -729,6 +779,19 @@ app.clientside_callback(
                     }
                 }
             }, true);
+
+            document.addEventListener('click', function(e) {
+                if (e.button !== undefined && e.button !== 0) return;
+                if (!e.target || !e.target.closest || !e.target.closest('#image-graph')) return;
+                if (e.target.closest('.modebar')) return;
+                var graphEl = document.getElementById('image-graph');
+                var gd = graphEl ? graphEl.querySelector('.js-plotly-plot') : null;
+                var hasImage = Boolean(gd && gd.data && gd.data.length > 0);
+                if (!hasImage) {
+                    var fileIn = document.querySelector('#upload-image input[type="file"]');
+                    if (fileIn) fileIn.click();
+                }
+            }, true);
         }
         return window.dash_clientside.no_update;
     }
@@ -738,8 +801,11 @@ app.clientside_callback(
 )
 
 # ── Helper: compute grid positions ─────────────────────────────────────
-def _grid_positions(spacing, offset_x, offset_y, w, h):
+def _grid_positions(spacing, offset_x, offset_y, w, h, spacing_y=None):
     """Return lists of x and y grid line positions."""
+    spacing_y = spacing if spacing_y is None else spacing_y
+    if not all(np.isfinite(v) for v in (spacing, spacing_y, offset_x, offset_y)) or min(spacing, spacing_y) < 1:
+        raise ValueError("Grid spacing must be finite and at least one pixel")
     x_pos = []
     sx = offset_x % spacing
     x = sx
@@ -747,11 +813,11 @@ def _grid_positions(spacing, offset_x, offset_y, w, h):
         x_pos.append(x)
         x += spacing
     y_pos = []
-    sy = offset_y % spacing
+    sy = offset_y % spacing_y
     y = sy
     while y < h:
         y_pos.append(y)
-        y += spacing
+        y += spacing_y
     return x_pos, y_pos
 
 
@@ -764,20 +830,25 @@ def _grid_positions(spacing, offset_x, offset_y, w, h):
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('center-point-store', 'data'),
-     State('fluor-channel', 'value')],
+     State('fluor-channel', 'value'),
+     State('grid-y-spacing-slider', 'value'),
+     State('link-spacing-check', 'value')],
     prevent_initial_call=True
 )
-def compute_fluorescence(n_clicks, rotation, spacing, offset_x, offset_y, center_point, channel):
+def compute_fluorescence(n_clicks, rotation, spacing, offset_x, offset_y, center_point, channel, spacing_y=None, link_spacing=None):
     cx = center_point.get('x', 0) if center_point else 0
     cy = center_point.get('y', 0) if center_point else 0
     true_offset_x = cx + offset_x
     true_offset_y = cy + offset_y
 
-    current = _uploaded_image if _uploaded_image is not None else original_image
+    if _uploaded_image is None:
+        raise dash.exceptions.PreventUpdate
+    current = _uploaded_image
     rotated = _get_rotated_pil(current, rotation)
     arr = np.array(rotated)
     w, h = rotated.size
-    x_pos, y_pos = _grid_positions(spacing, true_offset_x, true_offset_y, w, h)
+    spacing_y = spacing if spacing_y is None or 'link' in (link_spacing or []) else spacing_y
+    x_pos, y_pos = _grid_positions(spacing, true_offset_x, true_offset_y, w, h, spacing_y)
 
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
@@ -879,26 +950,21 @@ def update_matrix_graph(fluor_data):
     fig.update_layout(
         paper_bgcolor='#1e1e1e',
         plot_bgcolor='#1e1e1e',
-        xaxis={'title': 'Column', 'side': 'top', 'tickfont': {'color': '#ccc', 'size': 9}, 'titlefont': {'color': '#aaa', 'size': 10}},
-        yaxis={'title': 'Row', 'autorange': 'reversed', 'tickfont': {'color': '#ccc', 'size': 9}, 'titlefont': {'color': '#aaa', 'size': 10}},
+        xaxis={'title': {'text': 'Column', 'font': {'color': '#aaa', 'size': 10}}, 'side': 'top', 'tickfont': {'color': '#ccc', 'size': 9}},
+        yaxis={'title': {'text': 'Row', 'font': {'color': '#aaa', 'size': 10}}, 'autorange': 'reversed', 'tickfont': {'color': '#ccc', 'size': 9}},
         margin={'l': 30, 'r': 10, 't': 35, 'b': 20}
     )
     return fig
 
 
-# ── Update well dropdown options ───────────────────────────────────────
-@app.callback(
-    Output('crop-well-dropdown', 'options'),
-    [Input('image-store', 'data'),
-     Input('grid-spacing-slider', 'value'),
-     Input('grid-x-offset-slider', 'value'),
-     Input('grid-y-offset-slider', 'value')]
-)
-def update_well_options(img_data, spacing, offset_x, offset_y):
+# ── Update well dropdown options (clientside for zero HTTP lag during slider drag, Python helper retained for tests) ──
+def update_well_options(img_data, spacing, offset_x, offset_y, spacing_y=None, link_spacing=None, center_point=None):
     if not img_data:
         return []
     w, h = img_data['w'], img_data['h']
-    x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
+    x_pos, y_pos = _grid_positions(spacing, offset_x + (center_point or {}).get('x', 0),
+                                            offset_y + (center_point or {}).get('y', 0), w, h,
+                                            spacing if spacing_y is None or 'link' in (link_spacing or []) else spacing_y)
     n_rows = max(0, len(y_pos) - 1)
     n_cols = max(0, len(x_pos) - 1)
     
@@ -916,6 +982,54 @@ def update_well_options(img_data, spacing, offset_x, offset_y):
     return options
 
 
+app.clientside_callback(
+    """
+    function(imgData, spacing, offsetX, offsetY, spacingY, linkSpacing, centerPoint) {
+        if (!imgData) return [];
+        var w = imgData.w, h = imgData.h;
+        var isLinked = (linkSpacing || []).includes('link');
+        var sx = Math.max(Number(spacing) || 1, 1);
+        var sy = (spacingY === null || spacingY === undefined || isLinked) ? sx : Math.max(Number(spacingY) || 1, 1);
+        var cx = centerPoint && centerPoint.x ? centerPoint.x : 0;
+        var cy = centerPoint && centerPoint.y ? centerPoint.y : 0;
+        var trueOx = (Number(offsetX) || 0) + cx;
+        var trueOy = (Number(offsetY) || 0) + cy;
+        var startX = ((trueOx % sx) + sx) % sx;
+        var startY = ((trueOy % sy) + sy) % sy;
+        var nCols = startX < w ? Math.max(0, Math.ceil((w - startX) / sx) - 1) : 0;
+        var nRows = startY < h ? Math.max(0, Math.ceil((h - startY) / sy) - 1) : 0;
+        var maxOptions = 1000;
+        var options = [];
+        function rowLabel(idx) {
+            var label = '';
+            var i = idx;
+            do {
+                label = String.fromCharCode(65 + (i % 26)) + label;
+                i = Math.floor(i / 26) - 1;
+            } while (i >= 0);
+            return label;
+        }
+        for (var r = 0; r < nRows; r++) {
+            var rLbl = rowLabel(r);
+            for (var c = 0; c < nCols; c++) {
+                if (options.length >= maxOptions) return options;
+                options.push({label: rLbl + (c + 1), value: r + ',' + c});
+            }
+        }
+        return options;
+    }
+    """,
+    Output('crop-well-dropdown', 'options'),
+    [Input('image-store', 'data'),
+     Input('grid-spacing-slider', 'value'),
+     Input('grid-x-offset-slider', 'value'),
+     Input('grid-y-offset-slider', 'value'),
+     Input('grid-y-spacing-slider', 'value'),
+     Input('link-spacing-check', 'value'),
+     Input('center-point-store', 'data')]
+)
+
+
 # ── Crop & download a single well ──────────────────────────────────────
 @app.callback(
     Output('download-crop', 'data'),
@@ -924,18 +1038,27 @@ def update_well_options(img_data, spacing, offset_x, offset_y):
      State('rotation-slider', 'value'),
      State('grid-spacing-slider', 'value'),
      State('grid-x-offset-slider', 'value'),
-     State('grid-y-offset-slider', 'value')],
+     State('grid-y-offset-slider', 'value'),
+     State('grid-y-spacing-slider', 'value'),
+     State('link-spacing-check', 'value'),
+     State('center-point-store', 'data')],
     prevent_initial_call=True
 )
-def crop_well(n_clicks, well_value, rotation, spacing, offset_x, offset_y):
+def crop_well(n_clicks, well_value, rotation, spacing, offset_x, offset_y, spacing_y=None, link_spacing=None, center_point=None):
     if not well_value:
         raise dash.exceptions.PreventUpdate
     r, c = [int(v) for v in well_value.split(',')]
-    current = _uploaded_image if _uploaded_image is not None else original_image
+    if _uploaded_image is None:
+        raise dash.exceptions.PreventUpdate
+    current = _uploaded_image
     rotated = _get_rotated_pil(current, rotation)
     w, h = rotated.size
-    x_pos, y_pos = _grid_positions(spacing, offset_x, offset_y, w, h)
+    x_pos, y_pos = _grid_positions(spacing, offset_x + (center_point or {}).get('x', 0),
+                                            offset_y + (center_point or {}).get('y', 0), w, h,
+                                            spacing if spacing_y is None or 'link' in (link_spacing or []) else spacing_y)
 
+    if not (0 <= r < len(y_pos)-1 and 0 <= c < len(x_pos)-1):
+        raise dash.exceptions.PreventUpdate
     x0 = int(round(x_pos[c]))
     x1 = int(round(x_pos[c + 1]))
     y0 = int(round(y_pos[r]))
@@ -957,7 +1080,9 @@ def crop_well(n_clicks, well_value, rotation, spacing, offset_x, offset_y):
     prevent_initial_call=True
 )
 def save_image(n_clicks, rotation):
-    current = _uploaded_image if _uploaded_image is not None else original_image
+    if _uploaded_image is None:
+        raise dash.exceptions.PreventUpdate
+    current = _uploaded_image
     rotated = _get_rotated_pil(current, rotation)
     buf = BytesIO()
     rotated.save(buf, format='PNG')
@@ -974,11 +1099,16 @@ def save_image(n_clicks, rotation):
      State('grid-x-offset-slider', 'value'),
      State('grid-y-offset-slider', 'value'),
      State('grid-opacity-slider', 'value'),
-     State('show-labels-check', 'value')],
+     State('show-labels-check', 'value'),
+     State('grid-y-spacing-slider', 'value'),
+     State('link-spacing-check', 'value'),
+     State('center-point-store', 'data')],
     prevent_initial_call=True
 )
-def save_grid(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels):
-    current = _uploaded_image if _uploaded_image is not None else original_image
+def save_grid(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels, spacing_y=None, link_spacing=None, center_point=None):
+    if _uploaded_image is None:
+        raise dash.exceptions.PreventUpdate
+    current = _uploaded_image
     rotated = _get_rotated_pil(current, rotation)
     w, h = rotated.size
     grid_img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
@@ -986,21 +1116,16 @@ def save_grid(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_lab
     alpha = int(opacity * 255)
     color = (0, 255, 255, alpha)
 
-    col_positions, row_positions = _grid_positions(spacing, offset_x, offset_y, w, h)
+    col_positions, row_positions = _grid_positions(spacing, offset_x + (center_point or {}).get('x', 0),
+                                            offset_y + (center_point or {}).get('y', 0), w, h,
+                                            spacing if spacing_y is None or 'link' in (link_spacing or []) else spacing_y)
     for x in col_positions:
         draw.line([(x, 0), (x, h)], fill=color, width=2)
     for y in row_positions:
         draw.line([(0, y), (w, y)], fill=color, width=2)
 
     if show_labels and 'show' in show_labels:
-        font_size = min(max(int(spacing * 0.15), 8), 16)
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", font_size)
-        except Exception:
-            try:
-                font = ImageFont.truetype("Arial.ttf", font_size)
-            except Exception:
-                font = ImageFont.load_default()
+        font = _get_mono_font(min(max(int(spacing * 0.15), 8), 16))
         for r in range(len(row_positions) - 1):
             for c in range(len(col_positions) - 1):
                 cx = (col_positions[c] + col_positions[c + 1]) / 2
@@ -1025,11 +1150,16 @@ def save_grid(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_lab
      State('grid-opacity-slider', 'value'),
      State('show-labels-check', 'value'),
      State('fluor-store', 'data'),
-     State('show-fluor-check', 'value')],
+     State('show-fluor-check', 'value'),
+     State('grid-y-spacing-slider', 'value'),
+     State('link-spacing-check', 'value'),
+     State('center-point-store', 'data')],
     prevent_initial_call=True
 )
-def save_merged(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels, fluor_data, show_fluor):
-    current = _uploaded_image if _uploaded_image is not None else original_image
+def save_merged(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_labels, fluor_data, show_fluor, spacing_y=None, link_spacing=None, center_point=None):
+    if _uploaded_image is None:
+        raise dash.exceptions.PreventUpdate
+    current = _uploaded_image
     rotated = _get_rotated_pil(current, rotation)
     w, h = rotated.size
 
@@ -1039,21 +1169,16 @@ def save_merged(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_l
     alpha = int(opacity * 255)
     color = (0, 255, 255, alpha)
 
-    col_positions, row_positions = _grid_positions(spacing, offset_x, offset_y, w, h)
+    col_positions, row_positions = _grid_positions(spacing, offset_x + (center_point or {}).get('x', 0),
+                                            offset_y + (center_point or {}).get('y', 0), w, h,
+                                            spacing if spacing_y is None or 'link' in (link_spacing or []) else spacing_y)
     for x in col_positions:
         draw.line([(x, 0), (x, h)], fill=color, width=2)
     for y in row_positions:
         draw.line([(0, y), (w, y)], fill=color, width=2)
 
     if show_labels and 'show' in show_labels:
-        font_size = min(max(int(spacing * 0.15), 8), 16)
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", font_size)
-        except Exception:
-            try:
-                font = ImageFont.truetype("Arial.ttf", font_size)
-            except Exception:
-                font = ImageFont.load_default()
+        font = _get_mono_font(min(max(int(spacing * 0.15), 8), 16))
         for r in range(len(row_positions) - 1):
             for c in range(len(col_positions) - 1):
                 cx = (col_positions[c] + col_positions[c + 1]) / 2
@@ -1064,15 +1189,7 @@ def save_merged(n_clicks, rotation, spacing, offset_x, offset_y, opacity, show_l
     # Draw fluorescence values if computed and checked
     if show_fluor and 'show' in show_fluor and fluor_data and fluor_data.get('values'):
         vals = fluor_data['values']
-        font_size = min(max(int(spacing * 0.14), 8), 14)
-        try:
-            f_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", font_size)
-        except Exception:
-            try:
-                f_font = ImageFont.truetype("Arial.ttf", font_size)
-            except Exception:
-                f_font = ImageFont.load_default()
-
+        f_font = _get_mono_font(min(max(int(spacing * 0.14), 8), 14))
         yellow_color = (255, 255, 0, 230)
         for r in range(min(len(vals), len(row_positions) - 1)):
             for c in range(min(len(vals[r]), len(col_positions) - 1)):
@@ -1192,7 +1309,21 @@ def load_settings(contents):
         _, content_string = contents.split(',')
         decoded = base64.b64decode(content_string).decode('utf-8')
         s = json.loads(decoded)
+        if not isinstance(s, dict):
+            raise ValueError('Settings must be a JSON object')
+        bounds = {'rotation': (-180, 180), 'grid_spacing': (1, 10000),
+                  'grid_y_spacing': (1, 10000), 'grid_x_offset': (-100000, 100000),
+                  'grid_y_offset': (-100000, 100000), 'grid_opacity': (0, 1),
+                  'crop_top': (0, 99), 'crop_bottom': (0, 99), 'crop_left': (0, 99), 'crop_right': (0, 99)}
+        for key, (lo, hi) in bounds.items():
+            if key in s and (not isinstance(s[key], (int, float)) or not np.isfinite(s[key]) or not lo <= s[key] <= hi):
+                raise ValueError(f'Invalid {key}')
+        for key, allowed in [('link_spacing', 'link'), ('show_labels', 'show')]:
+            if key in s and (not isinstance(s[key], list) or any(x != allowed for x in s[key])):
+                raise ValueError(f'Invalid {key}')
         cp = s.get('center_point', {'x': 0.0, 'y': 0.0})
+        if not isinstance(cp, dict) or any(not isinstance(cp.get(k, 0), (int, float)) or not np.isfinite(cp.get(k, 0)) for k in ('x', 'y')):
+            raise ValueError('Invalid center point')
         return (
             s.get('rotation', 0),
             s.get('grid_spacing', 229),
@@ -1331,9 +1462,21 @@ def handle_keypress(key_data, x_val, y_val, rot_val, space_val, op_val, placemen
     raise dash.exceptions.PreventUpdate
 
 
+# SurveyApps: computed values belong to one exact image/alignment/channel.
+# Registered clientside so dragging sliders never triggers HTTP round-trips.
+def invalidate_fluorescence(*_):
+    return None
 
 
-
+app.clientside_callback(
+    "function() { return null; }",
+    Output('fluor-store', 'data', allow_duplicate=True),
+    [Input('image-store', 'data'), Input('grid-spacing-slider', 'value'),
+     Input('grid-y-spacing-slider', 'value'), Input('link-spacing-check', 'value'),
+     Input('grid-x-offset-slider', 'value'), Input('grid-y-offset-slider', 'value'),
+     Input('center-point-store', 'data'), Input('fluor-channel', 'value')],
+    prevent_initial_call=True
+)
 
 if __name__ == '__main__':
     import sys
